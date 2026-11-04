@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <parent><groupId>com.ontologywiki</groupId><artifactId>ontology-platform</artifactId><version>3.9.1</version></parent>
+  <modelVersion>4.0.0</modelVersion>
+  <artifactId>ontology-core</artifactId>
+  <dependencies>
+    <dependency><groupId>com.ontologywiki</groupId><artifactId>ontology-common</artifactId></dependency>
+    <dependency><groupId>org.springframework</groupId><artifactId>spring-jdbc</artifactId></dependency>
+    <dependency><groupId>mysql</groupId><artifactId>mysql-connector-java</artifactId></dependency>
+    <dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId></dependency>
+    <dependency><groupId>org.apache.commons</groupId><artifactId>commons-compress</artifactId><version>1.19</version></dependency>
+    <dependency>
+      <groupId>org.apache.hive</groupId><artifactId>hive-jdbc</artifactId><version>3.1.3</version>
+      <exclusions>
+        <!-- hive-common -> hadoop-common brings Tomcat 5.5 Jasper, which is incompatible with Spring Boot's embedded Tomcat 9. -->
+        <exclusion><groupId>tomcat</groupId><artifactId>jasper-compiler</artifactId></exclusion>
+        <exclusion><groupId>tomcat</groupId><artifactId>jasper-runtime</artifactId></exclusion>
+        <!-- hbase-server -> jetty-runner contributes Jasper 9.4, which conflicts with embedded Tomcat 9.0. -->
+        <exclusion><groupId>org.eclipse.jetty</groupId><artifactId>jetty-runner</artifactId></exclusion>
+      </exclusions>
+    </dependency>
+  </dependencies>
+</project>

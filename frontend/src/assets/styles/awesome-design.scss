@@ -1,0 +1,91 @@
+/* Shared product layer based on the awesome-design-md Notion reference. */
+.app-main {
+  background: #f6f5f4;
+}
+
+.tags-view-container {
+  height: 46px !important;
+  padding: 0 12px;
+  background: #f8fafc !important;
+  border-bottom: 1px solid #e7edf5 !important;
+  box-shadow: none !important;
+}
+
+.tags-view-container .tags-view-item {
+  display: inline-flex;
+  align-items: center;
+  height: 32px !important;
+  line-height: 30px !important;
+  margin: 7px 5px 0 0 !important;
+  padding: 0 12px;
+  border: 1px solid transparent !important;
+  border-radius: 8px !important;
+  color: #64748b !important;
+  background: transparent !important;
+}
+
+.tags-view-container .tags-view-item.active {
+  color: var(--tag-active-color, #2f88ff) !important;
+  border-color: #d7e7ff !important;
+  background: #edf5ff !important;
+}
+
+.tags-view-container .tags-view-item .svg-icon { width: 14px; height: 14px; margin-right: 6px; }
+.tags-view-container .tags-view-item .el-icon-close { margin-left: 7px; color: #8a97a8; }
+
+.el-alert {
+  border: 1px solid rgba(0, 117, 222, .12);
+  border-radius: 10px;
+  background: #f2f9ff;
+}
+
+.app-container > .el-form--inline {
+  padding: 18px 20px 2px;
+  margin-bottom: 18px;
+  border: 1px solid rgba(0, 0, 0, .08);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: rgba(0, 0, 0, .025) 0 2px 10px;
+}
+
+.el-form-item__label { color: #615d59; font-weight: 500; }
+.el-form-item { margin-bottom: 18px; }
+.right-toolbar { color: #615d59; }
+.pagination-container { padding-top: 6px; }
+.el-pagination.is-background .el-pager li:not(.disabled).active { background: #0075de; }
+.el-breadcrumb__inner, .el-breadcrumb__inner a { color: #615d59 !important; }
+.el-breadcrumb__inner a:hover { color: #0075de !important; }
+
+.sidebar-container { width: 232px !important; background: #172335 !important; border-right: 1px solid #24354c; box-shadow: 8px 0 24px rgba(19, 35, 56, .08) !important; }
+.sidebar-container .el-scrollbar, .sidebar-container .el-menu { background: #172335 !important; }
+.sidebar-container .el-menu { padding: 12px 0 18px; }
+.sidebar-container .el-menu-item, .sidebar-container .el-submenu__title { height: 46px; line-height: 46px; margin: 4px 12px; border-radius: 10px; color: #9caec3 !important; transition: background .18s ease, color .18s ease, transform .18s ease; }
+.sidebar-container .el-menu-item:hover, .sidebar-container .el-submenu__title:hover { background: #24354c !important; color: #fff !important; }
+.sidebar-container .el-menu-item.is-active { color: #fff !important; background: #2f88ff !important; box-shadow: 0 5px 14px rgba(47, 136, 255, .24); font-weight: 600; }
+.sidebar-container .el-submenu.is-active > .el-submenu__title { color: #fff !important; }
+.sidebar-container .el-submenu .el-menu { background: transparent !important; }
+.sidebar-container .el-submenu .el-menu-item { color: #91a3b8 !important; }
+.sidebar-container .el-submenu .el-menu-item.is-active { color: #78b5ff !important; background: rgba(47, 136, 255, .16) !important; box-shadow: none; }
+.sidebar-container .menu-entry-icon { display:inline-block; width:18px; margin-right:10px; font-size:17px; text-align:center; vertical-align:middle; }
+.sidebar-logo-container { height: 68px !important; line-height: 68px !important; background: #172335 !important; border-bottom: 1px solid #29394f; }
+.sidebar-logo-container .sidebar-title { color: #fff !important; font-size: 16px !important; }
+.sidebar-logo-container .brand-caption { color: #8fa1b8; }
+
+.topNavLayout .navbar.nav3 { padding: 0 20px; gap: 12px; }
+.topNavLayout .navbar.nav3 .sidebar-logo-container { width: 204px; height: 64px !important; flex: 0 0 204px; padding: 0; justify-content: flex-start; background: transparent !important; border: 0 !important; }
+.topNavLayout .navbar.nav3 .sidebar-logo-link { justify-content: flex-start; gap: 10px; }
+.topNavLayout .navbar.nav3 .brand-symbol { color: #2f88ff; background: #edf5ff; border-color: #dcecff; box-shadow:none; }
+.topNavLayout .navbar.nav3 .sidebar-title { color: #1d2330 !important; }
+.topNavLayout .navbar.nav3 .brand-caption { color: #8491a3; }
+.topNavLayout .navbar.nav3 .topbar-container { margin: 0; }
+.topNavLayout .navbar.nav3 .right-menu { flex-shrink: 0; }
+@media (max-width: 1080px) {
+  .topNavLayout .navbar.nav3 { padding: 0 12px; gap: 4px; }
+  .topNavLayout .navbar.nav3 .sidebar-logo-container { width: 178px; flex-basis: 178px; }
+  .topbar-menu.el-menu--horizontal > .el-menu-item,
+  .topbar-menu.el-menu--horizontal > .el-submenu > .el-submenu__title { padding: 0 10px !important; }
+}
+
+@media (max-width: 768px) {
+  .app-container { padding: 20px 16px 32px; }
+}
