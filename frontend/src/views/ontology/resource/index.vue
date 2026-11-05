@@ -8,16 +8,44 @@
       <el-form-item><el-input v-model="query.keyword" placeholder="名称 / 描述 / 类型" clearable @keyup.enter.native="search" /></el-form-item>
       <el-form-item><el-button type="primary" icon="el-icon-search" @click="search">搜索</el-button><el-button @click="reset">重置</el-button></el-form-item>
     </el-form>
-    <el-row class="mb8"><el-button v-hasPermi="[perm + ':add']" type="primary" plain icon="el-icon-plus" size="mini" @click="edit()">新增{{ title }}</el-button><el-tag v-if="resource==='assets' && query.spaceId" size="small" closable @close="clearSpaceFilter">行业筛选：{{ spaceName(query.spaceId) }}</el-tag><el-tag v-if="resource==='proposals' && query.taskId" size="small" closable @close="clearTaskFilter">来源任务：{{ proposalTaskName || ('任务 #' + query.taskId) }}</el-tag><el-radio-group v-if="resource==='assets'" v-model="assetView" size="mini" class="asset-view-switch"><el-radio-button label="list">资产列表</el-radio-button><el-radio-button label="graph">关联图</el-radio-button></el-radio-group><right-toolbar :showSearch.sync="showSearch" @queryTable="load" /></el-row>
-    <div v-if="resource==='assets' && assetView==='graph'" v-loading="assetGraphLoading" class="asset-graph-panel"><div class="asset-graph-note">连线表示来源资料已整理为 Wiki 页面；点击节点可查看资产内容。</div><div v-if="assetGraph.nodes && assetGraph.nodes.length" ref="assetGraphChart" class="asset-relation-graph"/><el-empty v-else :image-size="64" description="当前没有可展示的 Wiki 资产" /></div>
+    <div class="resource-toolbar mb8">
+      <div class="resource-toolbar-main">
+        <el-button v-hasPermi="[perm + ':add']" type="primary" plain icon="el-icon-plus" size="mini" @click="edit()">新增{{ title }}</el-button>
+        <el-tag v-if="resource==='assets' && query.spaceId" size="small" closable @close="clearSpaceFilter">行业筛选：{{ spaceName(query.spaceId) }}</el-tag>
+        <el-tag v-if="resource==='proposals' && query.taskId" size="small" closable @close="clearTaskFilter">来源任务：{{ proposalTaskName || ('任务 #' + query.taskId) }}</el-tag>
+      </div>
+      <div class="resource-toolbar-actions">
+        <el-radio-group v-if="resource==='assets'" v-model="assetView" size="mini" class="asset-view-switch">
+          <el-radio-button label="list">资产列表</el-radio-button>
+          <el-radio-button label="graph">关联图</el-radio-button>
+        </el-radio-group>
+        <right-toolbar :showSearch.sync="showSearch" @queryTable="load" />
+      </div>
+    </div>
+    <div v-if="resource==='assets' && assetView==='graph'" v-loading="assetGraphLoading" class="asset-graph-panel">
+      <div class="asset-graph-note">
+        <span>连线表示原始资料已整理为关联 Wiki文档；点击节点可查看内容。</span>
+        <div class="asset-graph-legend">
+          <span><i class="asset-legend-dot original" />原始文档</span>
+          <span><i class="asset-legend-dot wiki" />Wiki文档</span>
+        </div>
+      </div>
+      <div v-if="assetGraph.nodes && assetGraph.nodes.length" ref="assetGraphChart" class="asset-relation-graph" />
+      <el-empty v-else :image-size="64" description="当前没有可展示的 Wiki 资产" />
+    </div>
     <el-table v-if="resource!=='assets' || assetView==='list'" v-loading="loading" :data="rows" border>
       <el-table-column v-for="col in columns" :key="col.key" :prop="col.key" :label="col.key==='source_id' ? '数据源' : (col.key==='wiki_space_id' ? '行业知识空间' : (col.key==='review_by' ? '审核记录' : col.label))" min-width="130" show-overflow-tooltip><template slot-scope="s"><el-tag v-if="resource==='analyses' && col.key==='status'" size="mini" :type="analysisStatusType(s.row.status)">{{ analysisStatusText(s.row.status) }}</el-tag><el-tag v-else-if="resource==='proposals' && col.key==='status'" size="mini" :type="proposalStatusType(s.row.status)">{{ proposalStatusText(s.row.status) }}</el-tag><el-tag v-else-if="col.key==='status'" size="mini" :type="resourceStatusType(s.row.status)">{{ resourceStatusText(s.row.status) }}</el-tag><span v-else-if="resource==='proposals' && col.key==='proposal_type'">{{ proposalTypeText(s.row.proposal_type) }}</span><span v-else-if="resource==='proposals' && col.key==='review_by'">{{ s.row.review_by ? s.row.review_by + ' · ' + (s.row.review_time || '') + ' · ' + (s.row.review_comment || '无意见') : '尚未审核' }}</span><span v-else-if="resource==='assets' && col.key==='asset_type'">{{ assetTypeText(s.row.asset_type) }}</span><span v-else-if="resource==='datasources' && col.key==='db_type'">{{ datasourceTypeText(s.row.db_type) }}</span><span v-else>{{ col.key==='source_id' ? sourceName(s.row.source_id) : ((col.key==='space_id' || col.key==='wiki_space_id') ? spaceName(s.row[col.key]) : s.row[col.key]) }}</span></template></el-table-column>
-      <el-table-column label="操作" width="740" fixed="right"><template slot-scope="s"><el-button v-if="resource==='spaces'" v-hasPermi="['ontology:assets:list']" type="text" @click="openSpaceAssets(s.row)">查看资料</el-button><el-button v-if="resource==='spaces'" v-hasPermi="['ontology:dashboard:list']" type="text" @click="openScopedChat('SPACE',s.row.space_id)">行业问答</el-button><el-button v-if="resource==='assets'" v-hasPermi="[perm + ':query']" type="text" @click="viewAsset(s.row)">查看</el-button><el-button v-if="resource==='assets'" v-hasPermi="['ontology:dashboard:list']" type="text" @click="openScopedChat('ASSET',s.row.asset_id)">基于此资料问答</el-button><el-button v-if="resource==='assets' && s.row.asset_type!=='WIKI_PAGE' && s.row.asset_type!=='URL'" v-hasPermi="[perm + ':edit']" type="text" @click="ingest(s.row)">整理 Wiki</el-button><el-button v-if="resource==='datasources'" v-hasPermi="[perm + ':query']" type="text" @click="testSavedConnection(s.row)">测试连接</el-button><el-button v-if="resource==='datasources'" v-hasPermi="[perm + ':edit']" type="text" @click="credential(s.row)">设置密码</el-button><el-button v-if="resource==='datasources'" v-hasPermi="[perm + ':query']" type="text" @click="scan(s.row)">扫描</el-button><el-button v-if="resource==='analyses'" v-hasPermi="['ontology:dashboard:list']" type="text" @click="openScopedChat('ANALYSIS',s.row.task_id)">任务问答</el-button><el-button v-if="resource==='analyses'" v-hasPermi="[perm + ':edit']" type="text" :disabled="s.row.status==='RUNNING'" @click="analyze(s.row)">{{ s.row.status==='RUNNING' ? '分析中…' : (s.row.status==='DONE' ? '重新分析并生成版本' : '执行分析') }}</el-button><el-button v-if="resource==='analyses' && s.row.status==='DONE'" v-hasPermi="['ontology:proposals:list']" type="text" @click="openTaskProposal(s.row)">配置草案</el-button><el-button v-if="resource==='proposals'" v-hasPermi="[perm + ':query']" type="text" @click="viewProposal(s.row)">查看</el-button><el-button v-if="resource==='proposals'" v-hasPermi="[perm + ':edit']" type="text" @click="sandboxTestProposalRow(s.row)">沙箱测试</el-button><el-button v-if="resource==='proposals' && s.row.status==='DRAFT'" v-hasPermi="['ontology:proposals:review']" type="text" @click="reviewProposalRow(s.row,'APPROVED')">审核通过</el-button><el-button v-if="resource==='proposals' && s.row.status==='DRAFT'" v-hasPermi="['ontology:proposals:review']" type="text" @click="reviewProposalRow(s.row,'REJECTED')">驳回</el-button><el-button v-if="resource==='proposals'" v-hasPermi="[perm + ':query']" type="text" @click="downloadProposal(s.row,'rdf')">导出 RDF/OWL</el-button><el-button v-if="resource==='proposals'" v-hasPermi="[perm + ':query']" type="text" @click="downloadProposal(s.row,'project')">导出工程</el-button><el-button v-if="resource==='proposals' && s.row.status==='APPROVED'" v-hasPermi="[perm + ':edit']" type="text" @click="importProposalRow(s.row)">导入本体平台</el-button><el-button v-hasPermi="[perm + ':edit']" type="text" @click="edit(s.row)">{{ resource==='proposals' ? '高级编辑' : '编辑' }}</el-button><el-button v-hasPermi="[perm + ':remove']" type="text" @click="remove(s.row)">删除</el-button></template></el-table-column>
+      <el-table-column label="操作" width="740" fixed="right"><template slot-scope="s"><el-button v-if="resource==='spaces'" v-hasPermi="['ontology:assets:list']" type="text" @click="openSpaceAssets(s.row)">查看资料</el-button><el-button v-if="resource==='spaces'" v-hasPermi="['ontology:dashboard:list']" type="text" @click="openScopedChat('SPACE',s.row.space_id)">行业问答</el-button><el-button v-if="resource==='assets'" v-hasPermi="[perm + ':query']" type="text" @click="viewAsset(s.row)">查看</el-button><el-button v-if="resource==='assets'" v-hasPermi="['ontology:dashboard:list']" type="text" @click="openScopedChat('ASSET',s.row.asset_id)">基于此资料问答</el-button><el-button v-if="resource==='assets' && s.row.asset_type!=='WIKI_PAGE' && s.row.asset_type!=='URL'" v-hasPermi="[perm + ':edit']" type="text" :loading="String(ingestingAssetId) === String(s.row.asset_id)" @click="ingest(s.row)">整理 Wiki</el-button><el-button v-if="resource==='datasources'" v-hasPermi="[perm + ':query']" type="text" @click="testSavedConnection(s.row)">测试连接</el-button><el-button v-if="resource==='datasources'" v-hasPermi="[perm + ':edit']" type="text" @click="credential(s.row)">设置密码</el-button><el-button v-if="resource==='datasources'" v-hasPermi="[perm + ':query']" type="text" @click="scan(s.row)">扫描</el-button><el-button v-if="resource==='analyses'" v-hasPermi="['ontology:dashboard:list']" type="text" @click="openScopedChat('ANALYSIS',s.row.task_id)">任务问答</el-button><el-button v-if="resource==='analyses'" v-hasPermi="[perm + ':edit']" type="text" :disabled="s.row.status==='RUNNING'" @click="analyze(s.row)">{{ s.row.status==='RUNNING' ? '分析中…' : (s.row.status==='DONE' ? '重新分析并生成版本' : '执行分析') }}</el-button><el-button v-if="resource==='analyses' && s.row.status==='DONE'" v-hasPermi="['ontology:proposals:list']" type="text" @click="openTaskProposal(s.row)">配置草案</el-button><el-button v-if="resource==='proposals'" v-hasPermi="[perm + ':query']" type="text" @click="viewProposal(s.row)">查看</el-button><el-button v-if="resource==='proposals'" v-hasPermi="[perm + ':edit']" type="text" @click="sandboxTestProposalRow(s.row)">沙箱测试</el-button><el-button v-if="resource==='proposals' && s.row.status==='DRAFT'" v-hasPermi="['ontology:proposals:review']" type="text" @click="reviewProposalRow(s.row,'APPROVED')">审核通过</el-button><el-button v-if="resource==='proposals' && s.row.status==='DRAFT'" v-hasPermi="['ontology:proposals:review']" type="text" @click="reviewProposalRow(s.row,'REJECTED')">驳回</el-button><el-button v-if="resource==='proposals'" v-hasPermi="[perm + ':query']" type="text" @click="downloadProposal(s.row,'rdf')">导出 RDF/OWL</el-button><el-button v-if="resource==='proposals'" v-hasPermi="[perm + ':query']" type="text" @click="downloadProposal(s.row,'project')">导出工程</el-button><el-button v-if="resource==='proposals' && s.row.status==='APPROVED'" v-hasPermi="[perm + ':edit']" type="text" @click="importProposalRow(s.row)">导入本体平台</el-button><el-button v-hasPermi="[perm + ':edit']" type="text" @click="edit(s.row)">{{ resource==='proposals' ? '高级编辑' : '编辑' }}</el-button><el-button v-hasPermi="[perm + ':remove']" type="text" @click="remove(s.row)">删除</el-button></template></el-table-column>
     </el-table>
     <pagination v-show="total>0 && (resource!=='assets' || assetView==='list')" :total="total" :page.sync="query.pageNum" :limit.sync="query.pageSize" @pagination="load" />
     <el-dialog v-if="resource==='assets'" :title="form.id ? '编辑资料' : '新增资料'" :visible.sync="open" width="720px" append-to-body>
       <el-form ref="assetForm" :model="form" label-width="92px">
         <el-form-item label="资料名称" required><el-input v-model="form.asset_name" placeholder="例如：订单业务说明、客户管理制度" /></el-form-item>
+        <el-form-item label="所属行业" required>
+          <el-select v-model="form.space_id" filterable placeholder="请选择所属行业知识空间" style="width:100%" no-data-text="暂无行业，请先创建行业知识空间">
+            <el-option v-for="item in spaceOptions" :key="item.space_id" :label="item.space_name" :value="item.space_id" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="输入方式"><el-radio-group v-model="assetInputMode"><el-radio-button label="text">粘贴文本</el-radio-button><el-radio-button label="file">上传文件</el-radio-button></el-radio-group></el-form-item>
         <el-form-item v-if="assetInputMode==='file'" label="资料文件"><input ref="assetFile" type="file" accept=".txt,.md,.csv,.json,.yaml,.yml,.sql,.xml,.log" style="display:none" @change="readAssetFile"><el-button icon="el-icon-upload2" @click="$refs.assetFile.click()">选择文本文件</el-button><span v-if="assetFileName" class="asset-file-name">{{ assetFileName }}</span><div class="form-tip">支持 TXT、Markdown、CSV、JSON、YAML、SQL、XML 等文本文件，单个文件不超过 5MB</div></el-form-item>
         <el-form-item label="资料内容" required><el-input v-model="form.content" type="textarea" :rows="12" placeholder="粘贴业务制度、字段说明、流程文档、问答案例等内容" /></el-form-item>
@@ -31,6 +59,33 @@
       <p v-if="wikiResult.summary" class="wiki-result-summary">{{ wikiResult.summary }}</p>
       <pre class="wiki-result-content">{{ wikiResult.content }}</pre>
       <span slot="footer"><el-button type="primary" @click="wikiResultOpen=false">知道了</el-button></span>
+    </el-dialog>
+    <el-dialog
+      title="Wiki 整理进度"
+      :visible.sync="wikiIngestion.visible"
+      width="520px"
+      append-to-body
+      :close-on-click-modal="wikiIngestion.status !== 'RUNNING'"
+      :close-on-press-escape="wikiIngestion.status !== 'RUNNING'"
+      :show-close="wikiIngestion.status !== 'RUNNING'"
+    >
+      <div class="wiki-ingestion-status">
+        <i :class="[wikiIngestion.status === 'RUNNING' ? 'el-icon-loading' : 'el-icon-circle-close', { 'is-error': wikiIngestion.status === 'FAILED' }]" />
+        <div>
+          <strong>{{ wikiIngestion.status === 'RUNNING' ? '正在整理 Wiki 文档' : 'Wiki 整理未完成' }}</strong>
+          <p>{{ wikiIngestion.message }}</p>
+        </div>
+      </div>
+      <div v-if="wikiIngestion.status === 'RUNNING'" class="wiki-progress-track" role="progressbar" aria-label="Wiki 文档整理中">
+        <span />
+      </div>
+      <p v-if="wikiIngestion.status === 'RUNNING'" class="wiki-ingestion-tip">
+        正在处理“{{ wikiIngestion.asset && wikiIngestion.asset.asset_name }}”，资料较长时模型需要一些时间，请勿重复提交。
+      </p>
+      <span slot="footer">
+        <el-button v-if="wikiIngestion.status === 'FAILED'" type="primary" @click="retryWikiIngestion">重试</el-button>
+        <el-button v-if="wikiIngestion.status !== 'RUNNING'" @click="wikiIngestion.visible = false">关闭</el-button>
+      </span>
     </el-dialog>
     <el-dialog :title="assetPreview.asset_type==='WIKI_PAGE' ? 'Wiki 页面' : '资料详情'" :visible.sync="assetPreviewOpen" width="900px" append-to-body>
       <div class="asset-preview-meta"><strong>{{ assetPreview.asset_name }}</strong><el-tag size="mini">{{ assetTypeText(assetPreview.asset_type) }}</el-tag></div>
@@ -224,7 +279,7 @@ const configs = {
 }
 export default {
   name: 'OntologyResource',
-  data() { const raw = this.$route.path.split('/').filter(Boolean).pop(); const aliases={datasource:'datasources',analysis:'analyses',proposal:'proposals',import:'imports',space:'spaces',asset:'assets'}; const key = aliases[raw] || raw; const c = configs[key] || configs.assets; const ids={spaces:'space_id',assets:'asset_id',datasources:'datasource_id',analyses:'task_id',proposals:'proposal_id',imports:'import_id'}; const idLabels={spaces:'空间编号',assets:'资料编号',datasources:'数据源编号',analyses:'任务编号',proposals:'草案编号',imports:'导入编号'}; return { resource: key, title: c.title, fields: c.fields, columns: [{key:ids[key],label:idLabels[key]}, ...c.fields.filter(f => !f.hidden)], rows:[], total:0, loading:false, testing:false, showSearch:true, open:false, assetView:'list', assetGraphLoading:false, assetGraph:{nodes:[],edges:[]}, assetGraphChart:null, connectionMode:'host', jdbcUrlError:'', assetPreviewOpen:false, assetPreview:{}, wikiResultOpen:false, wikiResult:{}, analysisProgress:{ visible:false, status:'', step:1, message:'', elapsedSeconds:0, error:'', logs:[] }, analysisProgressTimer:null, analysisStartedAt:0, analysisOpen:false, analysisTab:'objects', analysisResult:{}, analysisConfig:{}, proposalVersions:[], graphChart:null, proposalTaskName:'', diffOpen:false, diffLoading:false, diffInfo:{}, datasourceOptions:[], spaceOptions:[], assetInputMode:'text', assetFileName:'', query:{ pageNum:1,pageSize:20,keyword:'',spaceId:undefined,taskId:undefined }, form:{}, rules:Object.fromEntries(c.fields.filter(f => f.required).map(f => [f.key,[{required:true,message:f.label+'不能为空',trigger:'blur'}]])) } },
+  data() { const raw = this.$route.path.split('/').filter(Boolean).pop(); const aliases={datasource:'datasources',analysis:'analyses',proposal:'proposals',import:'imports',space:'spaces',asset:'assets'}; const key = aliases[raw] || raw; const c = configs[key] || configs.assets; const ids={spaces:'space_id',assets:'asset_id',datasources:'datasource_id',analyses:'task_id',proposals:'proposal_id',imports:'import_id'}; const idLabels={spaces:'空间编号',assets:'资料编号',datasources:'数据源编号',analyses:'任务编号',proposals:'草案编号',imports:'导入编号'}; return { resource: key, title: c.title, fields: c.fields, columns: [{key:ids[key],label:idLabels[key]}, ...c.fields.filter(f => !f.hidden)], rows:[], total:0, loading:false, testing:false, showSearch:true, open:false, assetView:'list', assetGraphLoading:false, assetGraph:{nodes:[],edges:[]}, assetGraphChart:null, ingestingAssetId:'', wikiIngestion:{ visible:false, status:'', asset:null, message:'' }, connectionMode:'host', jdbcUrlError:'', assetPreviewOpen:false, assetPreview:{}, wikiResultOpen:false, wikiResult:{}, analysisProgress:{ visible:false, status:'', step:1, message:'', elapsedSeconds:0, error:'', logs:[] }, analysisProgressTimer:null, analysisStartedAt:0, analysisOpen:false, analysisTab:'objects', analysisResult:{}, analysisConfig:{}, proposalVersions:[], graphChart:null, proposalTaskName:'', diffOpen:false, diffLoading:false, diffInfo:{}, datasourceOptions:[], spaceOptions:[], assetInputMode:'text', assetFileName:'', query:{ pageNum:1,pageSize:20,keyword:'',spaceId:undefined,taskId:undefined }, form:{}, rules:Object.fromEntries(c.fields.filter(f => f.required).map(f => [f.key,[{required:true,message:f.label+'不能为空',trigger:'blur'}]])) } },
   filters: { shortText(value) { const text=String(value || ''); return text.length>100 ? text.slice(0,100)+'…' : text } },
   computed: { perm() { return 'ontology:' + this.resource } },
   watch: { analysisTab(value) { if (value === 'graph') this.$nextTick(this.renderGraph) }, assetView(value) { if (value === 'graph') this.loadAssetGraph() } },
@@ -249,12 +304,25 @@ export default {
     proposalStatusType(status) { return ({DRAFT:'warning',REVIEWED:'info',APPROVED:'success',REJECTED:'danger',IMPORTED:'success'})[status] || 'info' },
     versionNumber(version) { const index=this.proposalVersions.findIndex(item => String(item.proposal_id)===String(version && version.proposal_id)); return version && version.version ? version.version : (index < 0 ? '—' : this.proposalVersions.length - index) },
     proposalTypeText(type) { return ({ONTOLOGY_BUNDLE:'本体配置包',对象:'对象',逻辑:'逻辑',动作:'动作',关系:'关系'})[type] || type || '未知类型' },
-    assetTypeText(type) { return ({TEXT:'文本',FILE:'文件',WIKI_PAGE:'Wiki 页面',URL:'网页链接'})[type] || type || '未知类型' },
+    assetTypeText(type) { return ({TEXT:'原始文档',FILE:'原始文档',WIKI_PAGE:'Wiki文档',URL:'原始文档'})[type] || type || '未知类型' },
     datasourceTypeText(type) { return ({mysql:'MySQL',postgresql:'PostgreSQL',hive:'Hive'})[String(type || '').toLowerCase()] || type || '未知类型' },
     resourceStatusText(status) { return ({'0':'正常','1':'停用',PENDING:'待提交',SUCCESS:'导入成功',FAILED:'导入失败'})[status] || status || '未知状态' },
     resourceStatusType(status) { return ({'0':'success','1':'info',PENDING:'warning',SUCCESS:'success',FAILED:'danger'})[status] || 'info' },
     search() { this.query.pageNum=1; this.load() }, reset() { this.query.keyword=''; this.search() },
-    edit(row) { this.form=row ? Object.assign({},row,{id:row[this.columns[0].key]}) : (this.resource==='datasources' ? {db_type:'mysql',port:3306,sample_limit:0,status:'0'} : {}); this.assetInputMode=this.form.asset_type==='FILE'?'file':'text'; this.connectionMode=this.form.jdbc_url?'jdbc':'host'; this.jdbcUrlError=''; if (this.resource==='datasources' && this.connectionMode==='jdbc') this.parseDatasourceJdbcUrl(); this.assetFileName=''; this.open=true; this.$nextTick(() => this.$refs.form && this.$refs.form.clearValidate()) },
+    edit(row) {
+      this.form = row
+        ? Object.assign({}, row, { id: row[this.columns[0].key] })
+        : (this.resource === 'datasources'
+          ? { db_type: 'mysql', port: 3306, sample_limit: 0, status: '0' }
+          : (this.resource === 'assets' ? { space_id: this.query.spaceId || null } : {}))
+      this.assetInputMode = this.form.asset_type === 'FILE' ? 'file' : 'text'
+      this.connectionMode = this.form.jdbc_url ? 'jdbc' : 'host'
+      this.jdbcUrlError = ''
+      if (this.resource === 'datasources' && this.connectionMode === 'jdbc') this.parseDatasourceJdbcUrl()
+      this.assetFileName = ''
+      this.open = true
+      this.$nextTick(() => this.$refs.form && this.$refs.form.clearValidate())
+    },
     save() { if (this.resource==='assets') return this.saveAsset(); if (this.resource==='datasources') return this.saveDatasource(); this.$refs.form.validate(ok => { if (!ok) return; if (this.resource==='proposals' && this.form.config_json) { try { JSON.parse(this.form.config_json) } catch (e) { this.$modal.msgError('配置JSON格式不正确'); return } } const payload=Object.assign({},this.form); delete payload.id; if (this.resource==='proposals') { delete payload.status; delete payload.review_by; delete payload.review_time; delete payload.review_comment; delete payload.task_name } const request=this.form.id ? updateResource(this.resource,this.form.id,payload) : addResource(this.resource,payload); request.then(() => { this.$modal.msgSuccess('保存成功'); this.open=false; this.form.password=''; this.load() }) }) },
     databaseTypeChanged(value) { const ports={mysql:3306,postgresql:5432,hive:10000}; this.form.port=ports[value] || ''; if (value!=='postgresql') this.form.schema_name='' },
     parseDatasourceJdbcUrl() { const value=String(this.form.jdbc_url || '').trim(); this.jdbcUrlError=''; if (!value) return false; if (/(?:[?&;])(password|passwd|pwd)=/i.test(value)) { this.jdbcUrlError='JDBC URL 不能包含密码参数，请填写独立的密码项'; return false } try { const match=value.match(/^jdbc:(mysql|postgresql|postgres|hive2):\/\//i); if (!match) throw new Error('仅支持 MySQL、PostgreSQL 或 Hive JDBC URL'); const parsed=new URL(value.slice(5)); if (parsed.username || parsed.password) throw new Error('JDBC URL 不能嵌入账号或密码'); const protocol=match[1].toLowerCase(); const type=protocol==='postgres'?'postgresql':(protocol==='hive2'?'hive':protocol); const defaults={mysql:3306,postgresql:5432,hive:10000}; const database=decodeURIComponent(parsed.pathname.replace(/^\//,'').split('/')[0] || ''); this.form.db_type=type; this.form.host=parsed.hostname; this.form.port=parsed.port || defaults[type]; this.form.database_name=database; this.form.schema_name=type==='postgresql' ? (parsed.searchParams.get('currentSchema') || parsed.searchParams.get('schema') || this.form.schema_name || '') : ''; if (!this.form.host || !database) throw new Error('JDBC URL 中需要包含主机地址和数据库名'); return true } catch (error) { this.jdbcUrlError=error.message || 'JDBC URL 格式无效'; return false } },
@@ -262,8 +330,34 @@ export default {
     saveDatasource() { const error=this.validateDatasource(); if (error) return this.$modal.msgError(error); const payload={ name:String(this.form.name).trim(), db_type:this.form.db_type, host:this.form.host, port:this.form.port, database_name:this.form.database_name, schema_name:String(this.form.db_type).toLowerCase()==='postgresql' ? (this.form.schema_name || '') : '', jdbc_url:this.connectionMode==='jdbc' ? this.form.jdbc_url.trim() : '', username:String(this.form.username).trim(), sample_limit:this.form.sample_limit || 0, description:this.form.description || '', status:this.form.status || '0' }; if (this.form.password) payload.password=this.form.password; const request=this.form.id ? updateResource('datasources',this.form.id,payload) : addResource('datasources',payload); request.then(() => { this.$modal.msgSuccess('数据源已保存'); this.open=false; this.form.password=''; this.load() }) },
     saveAsset() { if (!String(this.form.asset_name || '').trim()) return this.$modal.msgError('请填写资料名称'); if (!this.form.space_id) return this.$modal.msgError('请选择所属行业知识空间'); if (!String(this.form.content || '').trim()) return this.$modal.msgError('请粘贴文本或选择文件'); const assetId=this.form.id; const payload={ asset_name:this.form.asset_name.trim(), space_id:this.form.space_id, asset_type:this.form.asset_type==='WIKI_PAGE'?'WIKI_PAGE':(this.assetInputMode==='file'?'FILE':'TEXT'), content:this.form.content, description:this.form.description || '', status:'0' }; const request=assetId ? updateResource('assets',assetId,payload) : addResource('assets',payload); request.then(({ data }) => { this.$modal.msgSuccess('资料已保存，可用于所选行业的 Wiki 问答和本体分析'); this.open=false; this.load(); const savedId=assetId || (data && data.id); if (savedId && payload.asset_type !== 'WIKI_PAGE') this.$confirm('资料已保存。是否立即整理并同步为 LLM Wiki 页面？','下一步操作',{confirmButtonText:'立即整理',cancelButtonText:'稍后处理',type:'info'}).then(() => this.syncAssetToWiki({ asset_id:savedId, asset_name:payload.asset_name })).catch(() => {}) }) },
     viewAsset(row) { const assetId=row.asset_id || row.assetId; if (!assetId) return; getResource('assets',assetId).then(({data}) => { this.assetPreview=data || {}; this.assetPreviewOpen=true }).catch(() => {}) },
-    ingest(row) { this.$modal.confirm('确认让模型整理这份资料并同步 Wiki 页面？整理完成后会展示页面内容。').then(() => this.syncAssetToWiki(row)).catch(() => {}) },
-    syncAssetToWiki(row) { return ingestWikiAsset(row.asset_id).then(({ data }) => listResource('assets', { pageNum:1, pageSize:100, keyword:data.title }).then(result => { const page=(result.rows || []).find(item => item.asset_type==='WIKI_PAGE' && item.asset_name===data.title && item.tags==='SOURCE:' + row.asset_id); if (!page) { this.$modal.msgError('整理已完成，但没有读取到 Wiki 正文，请刷新列表查看'); return } this.wikiResult={ title:page.asset_name, summary:page.description, content:page.content, updated:data.updated }; this.wikiResultOpen=true; this.load() })) },
+    ingest(row) { if (this.ingestingAssetId) return; this.$modal.confirm('确认让模型整理这份资料并同步 Wiki 页面？整理完成后会展示页面内容。').then(() => this.syncAssetToWiki(row)).catch(() => {}) },
+    syncAssetToWiki(row) {
+      if (!row || !row.asset_id || this.ingestingAssetId) return Promise.resolve()
+      this.ingestingAssetId = String(row.asset_id)
+      this.wikiIngestion = { visible: true, status: 'RUNNING', asset: row, message: '正在调用模型分析资料并生成 Wiki 文档，请稍候…' }
+      // 整理接口是同步长任务，前端展示不确定进度，避免用虚假百分比误导用户。
+      return ingestWikiAsset(row.asset_id).then(({ data }) => {
+        this.wikiIngestion.message = '模型已返回结果，正在读取并刷新 Wiki 文档…'
+        return listResource('assets', { pageNum: 1, pageSize: 100, keyword: data.title }).then(result => {
+          const page = (result.rows || []).find(item => item.asset_type === 'WIKI_PAGE' && item.asset_name === data.title && item.tags === 'SOURCE:' + row.asset_id)
+          if (!page) throw new Error('整理已完成，但没有读取到 Wiki 正文，请刷新列表查看')
+          this.wikiResult = { title: page.asset_name, summary: page.description, content: page.content, updated: data.updated }
+          this.wikiIngestion.status = 'DONE'
+          this.wikiIngestion.message = 'Wiki 文档已生成并保存。'
+          this.wikiIngestion.visible = false
+          this.wikiResultOpen = true
+          this.load()
+        })
+      }).catch(error => {
+        this.wikiIngestion.status = 'FAILED'
+        this.wikiIngestion.message = error && error.message ? error.message : '整理失败，请检查模型配置和资料内容后重试。'
+      }).finally(() => { this.ingestingAssetId = '' })
+    },
+    retryWikiIngestion() {
+      const asset = this.wikiIngestion.asset
+      this.wikiIngestion.visible = false
+      if (asset) this.$nextTick(() => this.syncAssetToWiki(asset))
+    },
     readAssetFile(event) { const file=event.target.files && event.target.files[0]; if (!file) return; if (file.size > 5 * 1024 * 1024) { this.$modal.msgError('文件不能超过 5MB'); event.target.value=''; return } this.assetFileName=file.name; if (!this.form.asset_name) this.form.asset_name=file.name.replace(/\.[^.]+$/, ''); const reader=new FileReader(); reader.onload=() => { this.form.content=String(reader.result || ''); this.assetInputMode='file' }; reader.onerror=() => this.$modal.msgError('文件读取失败，请改用粘贴文本'); reader.readAsText(file, 'UTF-8') },
     remove(row) { this.$modal.confirm('确认删除该条记录吗？').then(() => deleteResource(this.resource,row[this.columns[0].key])).then(() => { this.$modal.msgSuccess('删除成功'); this.load() }).catch(() => {}) },
     testFormConnection() { const error=this.validateDatasource(); if (error) return this.$modal.msgError(error); this.testing=true; const payload=Object.assign({},this.form,{datasource_id:this.form.id || undefined,jdbc_url:this.connectionMode==='jdbc'?this.form.jdbc_url.trim():''}); testDatasource(payload).then(({ data }) => this.$alert(this.connectionHtml(data), '连接测试', { dangerouslyUseHTMLString: true, customClass: 'connection-result-dialog' })).finally(() => { this.testing=false }) },
@@ -322,4 +416,33 @@ export default {
 }
 </script>
 <style scoped>.notice{margin-bottom:16px}.asset-file-name{margin-left:12px;color:#53657d}.form-tip{margin-top:6px;color:#98a2b3;font-size:12px;line-height:18px}.form-error{margin-top:6px;color:#c45656;font-size:12px;line-height:18px}.asset-view-switch{margin-left:auto;margin-right:16px}.asset-graph-panel{min-height:420px;margin-bottom:16px;padding:14px 16px;border:1px solid #e3dfdb;border-radius:12px;background:#f6f5f4}.asset-graph-note{margin-bottom:10px;color:#7b746d;font-size:12px}.asset-relation-graph{height:460px;width:100%;border:1px solid #e8e2dc;border-radius:8px;background:#fff}.asset-preview-meta{display:flex;align-items:center;gap:12px;margin-bottom:12px;color:#24324b;font-size:16px}.wiki-result-title{margin:20px 0 8px;color:#24324b}.wiki-result-summary{margin:0 0 14px;color:#65748a}.wiki-result-content{max-height:520px;overflow:auto;margin:0;padding:18px;background:#f7f9fc;border:1px solid #e8edf4;border-radius:8px;color:#334155;white-space:pre-wrap;line-height:1.7;font:13px/1.7 Consolas,Monaco,monospace}.proposal-detail-head{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:14px 0 8px}.proposal-view-name{margin:0 0 5px;color:#31302e;font-size:18px;font-weight:700}.proposal-detail-meta{color:#8a817a;font-size:12px}.proposal-head-actions{display:flex;gap:8px}.proposal-versions{margin:10px 0 18px;padding:14px 16px;border:1px solid #e3dfdb;border-radius:12px;background:#f6f5f4}.proposal-section-title{display:flex;align-items:center;gap:10px;margin-bottom:10px;color:#31302e}.proposal-section-title span{color:#8a817a;font-size:12px}.proposal-version-list{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px}.proposal-version{min-width:240px;display:grid;grid-template-columns:auto 1fr;gap:4px 8px;padding:10px 12px;border:1px solid #e3dfdb;border-radius:9px;background:#fff;color:#615d59;text-align:left;cursor:pointer}.proposal-version:hover,.proposal-version.active{border-color:#0075de;box-shadow:0 2px 10px rgba(0,117,222,.12)}.proposal-version.active{background:#f2f9ff}.version-number{color:#0075de;font-weight:700}.version-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#31302e;font-weight:600}.version-tags{display:flex;gap:4px;align-items:center;grid-column:1 / -1}.proposal-version small{grid-column:1 / -1;color:#a39e98;font-size:11px}.analysis-progress-current{display:flex;align-items:center;gap:10px;margin-bottom:16px;color:#24324b}.analysis-progress-current i{font-size:20px;color:#2f88ff}.analysis-progress-current small{margin-left:auto;color:#8a96a8}.analysis-progress-steps{margin-bottom:18px}.analysis-progress-log{max-height:220px;overflow:auto;margin-bottom:16px;padding:12px 14px;border:1px solid #e8edf4;border-radius:8px;background:#f8fafc}.analysis-progress-log div{display:flex;gap:12px;padding:7px 0;color:#526174;font-size:13px}.analysis-progress-log time{min-width:70px;color:#9aa5b4}.analysis-counts{margin:16px 0}.count-card{border:1px solid #e8edf4;border-radius:8px;background:#f8fafc;padding:14px 16px}.count-card strong{display:block;color:#2f88ff;font-size:24px;line-height:28px}.count-card span{display:block;color:#7d8b9f;font-size:12px;margin-top:4px}.sub-table{margin-top:14px}.analysis-answer{margin-top:14px;padding:12px 14px;border-radius:8px;background:#f8fafc;color:#526174;white-space:pre-wrap;max-height:180px;overflow:auto}.analysis-answer strong{display:block;color:#24324b;margin-bottom:6px}.ontology-graph{height:480px;width:100%;border:1px solid rgba(0,0,0,.1);border-radius:12px;background:#f6f5f4}.diff-summary{display:flex;align-items:center;gap:10px;margin-bottom:14px;color:#615d59;font-size:12px}.diff-json{max-height:140px;overflow:auto;margin:0;color:#526174;font-size:11px;white-space:pre-wrap}.answer-editor-tip{margin:4px 0 0 92px;color:#8a817a;font-size:12px;line-height:1.6}
+</style>
+<style scoped>
+.resource-toolbar { display:flex; align-items:center; justify-content:space-between; gap:16px; min-height:34px; }
+.resource-toolbar-main,.resource-toolbar-actions { display:flex; align-items:center; gap:10px; min-width:0; }
+.resource-toolbar-main { flex-wrap:wrap; }
+.resource-toolbar-actions { flex:0 0 auto; margin-left:auto; }
+.resource-toolbar-actions ::v-deep .top-right-btn { float:none; margin-right:0 !important; }
+.asset-view-switch { margin:0 4px 0 0; }
+.asset-graph-note { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.asset-graph-legend { display:flex; align-items:center; gap:16px; flex:0 0 auto; }
+.asset-graph-legend span { display:inline-flex; align-items:center; color:#64748b; }
+.asset-legend-dot { width:8px; height:8px; margin-right:6px; border-radius:50%; }
+.asset-legend-dot.original { background:#c28b55; }
+.asset-legend-dot.wiki { background:#0075de; }
+.wiki-ingestion-status { display:flex; align-items:flex-start; gap:12px; color:#334155; }
+.wiki-ingestion-status > i { margin-top:2px; color:#2f88ff; font-size:22px; }
+.wiki-ingestion-status > i.is-error { color:#f56c6c; }
+.wiki-ingestion-status strong { display:block; font-size:15px; }
+.wiki-ingestion-status p { margin:6px 0 0; color:#64748b; line-height:1.6; overflow-wrap:anywhere; }
+.wiki-progress-track { height:6px; margin:20px 0 10px; overflow:hidden; border-radius:4px; background:#e8eef6; }
+.wiki-progress-track span { display:block; width:34%; height:100%; border-radius:inherit; background:#409eff; animation:wiki-ingestion-progress 1.4s ease-in-out infinite; }
+.wiki-ingestion-tip { margin:0; color:#94a3b8; font-size:12px; }
+@keyframes wiki-ingestion-progress { 0% { transform:translateX(-110%); } 100% { transform:translateX(320%); } }
+@media (max-width:767px) {
+  .resource-toolbar { align-items:flex-start; flex-wrap:wrap; }
+  .resource-toolbar-actions { flex-wrap:wrap; justify-content:flex-end; }
+  .asset-graph-note { align-items:flex-start; flex-direction:column; }
+}
+@media (prefers-reduced-motion:reduce) { .wiki-progress-track span { animation:none; transform:translateX(95%); } }
 </style>
