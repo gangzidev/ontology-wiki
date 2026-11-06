@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ontologywiki.ontology.mapper.OntologyAnalysisMapper">
+
+    <!-- 数据源连接信息统一返回列 -->
+    <sql id="datasourceColumns">
+        datasource_id, name, db_type, host, port, database_name, schema_name,
+        jdbc_url, username, password_enc, sample_limit
+    </sql>
+
+    <!-- ==================== 分析任务 ==================== -->
+
+    <select id="selectTask" resultType="java.util.LinkedHashMap">
+        select * from analysis_task where task_id = #{taskId}
+    </select>
+
+    <!-- 只在非执行中状态流转，避免并发重复触发 -->
+    <update id="markTaskRunning">
+        update analysis_task
+        set status = #{running}, summary = #{summary}, update_by = #{username}, update_time = now()
+        where task_id = #{taskId} and status &lt;&gt; #{running}
+    </update>
+
+    <update id="updateRunningProgress">
+        update analysis_task
+        set summary = #{summary}, update_by = #{username}, update_time = now()
+        where task_id = #{taskId} and status = #{running}
+    </update>
+
+    <update id="markTaskFinished">
+        update analysis_task
+        set summary = #{summary}, status = #{done}, update_by = #{username}, update_time = now()
+        where task_id = #{taskId}
+    </update>
+
+    <update id="markTaskFailed">
+        update analysis_task
+        set status = #{failed}, summary = #{summary}, update_by = #{username}, update_time = now()
+        where task_id = #{taskId}
+    </update>
+
+    <!-- ==================== 数据源 ==================== -->
+
+    <select id="selectDatasource" resultType="java.util.LinkedHashMap">
+        select <include refid="datasourceColumns"/>
+        from ontology_datasource
+        where datasource_id = #{datasourceId}
+    </select>
+
+    <update id="updateDatasourceCredential">
+        update ontology_datasource
+        set password_enc = #{passwordEnc}, update_by = #{username}, update_time = now()
+        where datasource_id = #{datasourceId}
+    </update>
+
+    <!-- ==================== 配置草案 ==================== -->
+
+    <update id="reviewProposal">
+        update ontology_proposal
+        set status = #{status}, review_by = #{username}, review_time = now(),
+            review_comment = #{comment}, update_by = #{username}, update_time = now()
+        where proposal_id = #{proposalId} and status = #{draft}
+    </update>
+
+    <select id="selectProposal" resultType="java.util.LinkedHashMap">
+        select * from ontology_proposal where proposal_id = #{proposalId}
+    </select>
+
+    <select id="selectProposalForExport" resultType="java.util.LinkedHashMap">
+        select proposal_name, config_json, task_id
+        from ontology_proposal
+        where proposal_id = #{proposalId}
+    </select>
+
+    <select id="selectProposalForDiff" resultType="java.util.LinkedHashMap">
+        select proposal_id, proposal_name, task_id, config_json
+        from ontology_proposal
+        where proposal_id = #{proposalId}
+    </select>
+
+    <select id="selectPreviousProposal" resultType="java.util.LinkedHashMap">
+        select proposal_id, proposal_name, config_json
+        from ontology_proposal
+        where task_id = #{taskId} and proposal_id &lt; #{proposalId}
+        order by proposal_id desc
+        limit 1
+    </select>
+
+    <select id="selectProposalNameAndConfig" resultType="java.util.LinkedHashMap">
+        select proposal_name, config_json
+        from ontology_proposal
+        where proposal_id = #{proposalId}
+    </select>
+
+    <select id="selectLatestProposalId" resultType="java.util.LinkedHashMap">
+        select proposal_id from ontology_proposal
+        where task_id = #{taskId}
+        order by proposal_id desc
+        limit 1
+    </select>
+
+    <select id="selectLatestProposalWithConfig" resultType="java.util.LinkedHashMap">
+        select proposal_id, config_json from ontology_proposal
+        where task_id = #{taskId}
+        order by proposal_id desc
+        limit 1
+    </select>
+
+    <select id="selectTaskContext" resultType="java.util.LinkedHashMap">
+        select t.task_id, t.summary, p.proposal_id, p.config_json
+        from analysis_task t
+        left join ontology_proposal p on p.proposal_id = (
+            select p2.proposal_id from ontology_proposal p2
+            where p2.task_id = t.task_id
+            order by p2.proposal_id desc
+            limit 1
+        )
+        where t.task_id = #{taskId}
+    </select>
+
+    <select id="selectTaskContextByProposal" resultType="java.util.LinkedHashMap">
+        select t.task_id, t.summary, p.proposal_id, p.config_json
+        from analysis_task t
+        join ontology_proposal p on p.task_id = t.task_id and p.proposal_id = #{proposalId}
+        where t.task_id = #{taskId}
+    </select>
+
+    <select id="countProposalOfTask" resultType="java.lang.Integer">
+        select count(*) from ontology_proposal
+        where proposal_id = #{proposalId} and task_id = #{taskId}
+    </select>
+
+    <update id="markProposalImported">
+        update ontology_proposal
+        set status = #{imported}, update_by = #{username}, update_time = now()
+        where proposal_id = #{proposalId}
+    </update>
+
+    <!-- 新增草案：task_id 与配置由分析流程写入 -->
+    <insert id="insertProposal" useGeneratedKeys="true" keyProperty="generatedId" keyColumn="proposal_id">
+        insert into ontology_proposal
+            (proposal_name, proposal_type, task_id, config_json, status, create_by, create_time)
+        values
+            (#{proposalName}, 'ONTOLOGY_BUNDLE', #{taskId}, #{configJson}, 'DRAFT', #{username}, now())
+    </insert>
+
+    <select id="selectTaskDatasource" resultType="java.util.LinkedHashMap">
+        select d.name, d.schema_name, d.db_type
+        from analysis_task t
+        left join ontology_datasource d on d.datasource_id = t.source_id
+        where t.task_id = #{taskId}
+    </select>
+
+    <!-- ==================== 导入记录 ==================== -->
+
+    <insert id="insertImportRecord">
+        insert into ontology_import_record
+            (proposal_id, target_system, status, detail, create_by, create_time)
+        values
+            (#{proposalId}, #{targetSystem}, #{status}, #{detail}, #{username}, now())
+    </insert>
+
+    <insert id="insertImportRecordWithKey" useGeneratedKeys="true" keyProperty="generatedId" keyColumn="import_id">
+        insert into ontology_import_record
+            (proposal_id, target_system, status, detail, create_by, create_time)
+        values
+            (#{proposalId}, #{targetSystem}, #{status}, #{detail}, #{username}, now())
+    </insert>
+
+</mapper>

@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ontologywiki.ontology.mapper.WikiChatMapper">
+
+    <!-- ==================== 范围校验 ==================== -->
+
+    <select id="selectAssetSpace" resultType="java.util.LinkedHashMap">
+        select space_id from wiki_asset where asset_id = #{assetId} and status = #{status}
+    </select>
+
+    <select id="selectTaskSpace" resultType="java.util.LinkedHashMap">
+        select wiki_space_id from analysis_task where task_id = #{taskId}
+    </select>
+
+    <select id="countEnabledSpace" resultType="java.lang.Integer">
+        select count(*) from wiki_space where space_id = #{spaceId} and status = #{status}
+    </select>
+
+    <!-- ==================== 会话 ==================== -->
+
+    <select id="selectSession" resultType="java.util.LinkedHashMap">
+        select space_id, scope_type, scope_id, context_state_json
+        from wiki_chat_session
+        where session_id = #{sessionId} and created_by = #{username}
+    </select>
+
+    <insert id="insertSession">
+        insert into wiki_chat_session
+            (session_id, space_id, scope_type, scope_id, title, created_by, create_time, update_time)
+        values
+            (#{sessionId}, #{spaceId}, #{scopeType}, #{scopeId}, #{title}, #{username}, now(), now())
+    </insert>
+
+    <update id="touchSession">
+        update wiki_chat_session set update_time = now()
+        where session_id = #{sessionId} and created_by = #{username}
+    </update>
+
+    <update id="updateSessionContext">
+        update wiki_chat_session
+        set context_state_json = #{contextState}, update_time = now()
+        where session_id = #{sessionId} and created_by = #{username}
+    </update>
+
+    <select id="listSessions" resultType="java.util.LinkedHashMap">
+        select session_id sessionId, space_id spaceId, scope_type scopeType,
+               scope_id scopeId, title, update_time updatedAt
+        from wiki_chat_session
+        where created_by = #{username}
+        order by update_time desc
+        limit #{limit}
+    </select>
+
+    <!-- ==================== 消息 ==================== -->
+
+    <select id="selectRecentMessages" resultType="java.util.LinkedHashMap">
+        select role, content from wiki_chat_message
+        where session_id = #{sessionId} and created_by = #{username}
+        order by message_id desc
+        limit #{limit}
+    </select>
+
+    <insert id="insertMessage">
+        insert into wiki_chat_message (session_id, role, content, created_by, create_time)
+        values (#{sessionId}, #{role}, #{content}, #{username}, now())
+    </insert>
+
+    <insert id="insertMessageWithKey" useGeneratedKeys="true" keyProperty="generatedId" keyColumn="message_id">
+        insert into wiki_chat_message (session_id, role, content, created_by, create_time)
+        values (#{sessionId}, #{role}, #{content}, #{username}, now())
+    </insert>
+
+    <select id="selectSessionMessages" resultType="java.util.LinkedHashMap">
+        select message_id, role, content, create_time
+        from wiki_chat_message
+        where session_id = #{sessionId} and created_by = #{username}
+        order by message_id desc
+        limit #{limit}
+    </select>
+
+    <!-- ==================== 引用 ==================== -->
+
+    <insert id="insertCitation">
+        insert ignore into wiki_chat_citation (message_id, asset_id)
+        values (#{messageId}, #{assetId})
+    </insert>
+
+    <!-- 批量取引用资产，避免逐条查询 -->
+    <select id="selectCitations" resultType="java.util.LinkedHashMap">
+        select c.message_id, c.asset_id, a.asset_name, a.asset_type
+        from wiki_chat_citation c
+        join wiki_asset a on a.asset_id = c.asset_id
+        where c.message_id in
+        <foreach collection="messageIds" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </select>
+
+</mapper>

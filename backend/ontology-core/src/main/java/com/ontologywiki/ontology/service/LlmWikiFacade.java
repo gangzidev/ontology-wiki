@@ -1,15 +1,15 @@
 package com.ontologywiki.ontology.service;
 
+import com.ontologywiki.ontology.mapper.LlmWikiFacadeMapper;
 import com.ontologywiki.ontology.service.analysis.AnalysisMemoryService;
 import com.ontologywiki.ontology.service.llm.LlmClient;
 import com.ontologywiki.ontology.service.llm.LlmConfigService;
 import com.ontologywiki.ontology.service.wiki.WikiIndexService;
 import com.ontologywiki.ontology.service.wiki.WikiIngestionService;
 import com.ontologywiki.ontology.service.wiki.WikiPageService;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
-import javax.annotation.PostConstruct;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -20,6 +20,9 @@ import java.util.Map;
  * <p>该类是重构过渡期的适配器，用于保持与旧代码的兼容性。
  * <p>新代码应该直接使用拆分后的服务（WikiPageService、LlmClient 等）。
  *
+ * <p>SQL 已下沉至 {@link LlmWikiFacadeMapper}；仅建表语句保留在本类，
+ * 因为 DDL 属于启动期结构迁移，不放在 Mapper 中。
+ *
  * @author ontology-wiki
  * @deprecated 请直接使用拆分后的服务
  */
@@ -27,13 +30,16 @@ import java.util.Map;
 @Deprecated
 public class LlmWikiFacade {
 
+    /** 问答日志默认返回条数 */
+    private static final int CHAT_LOG_LIMIT = 100;
+
     private final LlmConfigService configService;
     private final LlmClient llmClient;
     private final WikiPageService pageService;
     private final WikiIndexService indexService;
     private final WikiIngestionService ingestionService;
     private final AnalysisMemoryService memoryService;
-    private final JdbcTemplate jdbcTemplate;
+    private final LlmWikiFacadeMapper facadeMapper;
 
     public LlmWikiFacade(LlmConfigService configService,
                          LlmClient llmClient,
@@ -41,88 +47,28 @@ public class LlmWikiFacade {
                          WikiIndexService indexService,
                          WikiIngestionService ingestionService,
                          AnalysisMemoryService memoryService,
-                         JdbcTemplate jdbcTemplate) {
+                         LlmWikiFacadeMapper facadeMapper) {
         this.configService = configService;
         this.llmClient = llmClient;
         this.pageService = pageService;
         this.indexService = indexService;
         this.ingestionService = ingestionService;
         this.memoryService = memoryService;
-        this.jdbcTemplate = jdbcTemplate;
+        this.facadeMapper = facadeMapper;
     }
 
     /**
-     * 初始化表结构（兼容旧方法）
+     * 兼容旧方法：仅重新加载配置，不再建表。
+     *
+     * <p>建表、加列、数据修正与菜单初始化已全部迁到
+     * {@code backend/sql/ontology-wiki.sql}（全新安装）与
+     * {@code backend/sql/ontology-wiki-upgrade.sql}（存量升级），
+     * 由部署时人工执行，应用启动不再做任何结构变更。
+     *
+     * @deprecated 结构变更请执行 SQL 脚本，本方法只保留配置热加载语义
      */
-    @PostConstruct
+    @Deprecated
     public void ensureChatSessionTable() {
-        // 创建 LLM 配置表
-        jdbcTemplate.execute(
-                "CREATE TABLE IF NOT EXISTS ontology_llm_settings (" +
-                        "setting_id TINYINT NOT NULL, " +
-                        "enabled TINYINT(1) NOT NULL DEFAULT 0, " +
-                        "api_base_url VARCHAR(1000), " +
-                        "api_key_enc TEXT, " +
-                        "model VARCHAR(200), " +
-                        "update_by VARCHAR(64), " +
-                        "update_time DATETIME, " +
-                        "PRIMARY KEY(setting_id)" +
-                        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
-        );
-
-        // 创建分析知识表
-        jdbcTemplate.execute(
-                "CREATE TABLE IF NOT EXISTS ontology_analysis_memory (" +
-                        "memory_id BIGINT NOT NULL AUTO_INCREMENT, " +
-                        "space_id BIGINT NULL, " +
-                        "task_id BIGINT NOT NULL, " +
-                        "proposal_id BIGINT NULL, " +
-                        "memory_type VARCHAR(40) NOT NULL DEFAULT 'ANALYSIS_ANSWER', " +
-                        "title VARCHAR(255) NOT NULL, " +
-                        "content LONGTEXT NOT NULL, " +
-                        "source_json LONGTEXT NULL, " +
-                        "status VARCHAR(30) NOT NULL DEFAULT 'DRAFT', " +
-                        "version INT NOT NULL DEFAULT 1, " +
-                        "created_by VARCHAR(64), " +
-                        "create_time DATETIME, " +
-                        "update_by VARCHAR(64), " +
-                        "update_time DATETIME, " +
-                        "reviewed_by VARCHAR(64), " +
-                        "review_time DATETIME, " +
-                        "PRIMARY KEY(memory_id), " +
-                        "KEY idx_analysis_memory_task(task_id,status), " +
-                        "KEY idx_analysis_memory_space(space_id,status)" +
-                        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
-        );
-
-        // 创建问答会话表
-        jdbcTemplate.execute(
-                "CREATE TABLE IF NOT EXISTS wiki_chat_session (" +
-                        "session_id VARCHAR(64) NOT NULL, " +
-                        "space_id BIGINT NULL, " +
-                        "scope_type VARCHAR(20) NOT NULL DEFAULT 'ALL', " +
-                        "scope_id BIGINT NULL, " +
-                        "context_state_json LONGTEXT NULL, " +
-                        "title VARCHAR(200) NOT NULL, " +
-                        "created_by VARCHAR(64) NOT NULL, " +
-                        "create_time DATETIME NULL, " +
-                        "update_time DATETIME NULL, " +
-                        "PRIMARY KEY(session_id,created_by), " +
-                        "KEY idx_wiki_chat_session_user(created_by,update_time)" +
-                        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
-        );
-
-        // 创建引用关联表
-        jdbcTemplate.execute(
-                "CREATE TABLE IF NOT EXISTS wiki_chat_citation (" +
-                        "message_id BIGINT NOT NULL, " +
-                        "asset_id BIGINT NOT NULL, " +
-                        "PRIMARY KEY(message_id,asset_id), " +
-                        "KEY idx_wiki_chat_citation_asset(asset_id)" +
-                        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
-        );
-
-        // 加载已存储的配置
         configService.loadStoredSettings();
     }
 
@@ -143,19 +89,19 @@ public class LlmWikiFacade {
     public Map<String, Object> health() {
         try {
             String models = llmClient.listModels();
-            return Map.of(
-                    "enabled", enabled(),
-                    "connected", true,
-                    "provider", "internal",
-                    "models", models
-            );
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("enabled", enabled());
+            result.put("connected", true);
+            result.put("provider", "internal");
+            result.put("models", models);
+            return result;
         } catch (Exception e) {
-            return Map.of(
-                    "enabled", enabled(),
-                    "connected", false,
-                    "provider", "internal",
-                    "message", "模型 API 不可用"
-            );
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("enabled", enabled());
+            result.put("connected", false);
+            result.put("provider", "internal");
+            result.put("message", "模型 API 不可用");
+            return result;
         }
     }
 
@@ -205,13 +151,7 @@ public class LlmWikiFacade {
     }
 
     public Object log() {
-        List<Map<String, Object>> messages = jdbcTemplate.queryForList(
-                "SELECT role, content, create_time " +
-                        "FROM wiki_chat_message " +
-                        "ORDER BY message_id DESC " +
-                        "LIMIT 100"
-        );
-        return messages;
+        return facadeMapper.selectRecentChatMessages(CHAT_LOG_LIMIT);
     }
 
     public void refreshIndex() {
@@ -229,16 +169,11 @@ public class LlmWikiFacade {
             throw new IllegalArgumentException("来源 URL 不能为空");
         }
 
-        jdbcTemplate.update(
-                "INSERT INTO wiki_asset " +
-                        "(asset_name, asset_type, description, content, status, " +
-                        "create_by, create_time, update_by, update_time) " +
-                        "VALUES (?, 'URL', 'URL 待整理来源', ?, '0', 'system', NOW(), 'system', NOW())",
-                url.trim(),
-                url.trim()
-        );
+        facadeMapper.insertUrlSource(url.trim());
 
-        return Map.of("saved", true);
+        Map<String, Object> savedResult = new LinkedHashMap<>();
+        savedResult.put("saved", true);
+        return savedResult;
     }
 
     // ==================== 分析知识管理 ====================

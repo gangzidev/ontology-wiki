@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { Notification, MessageBox, Message, Loading } from 'element-ui'
 import store from '@/store'
+import router from '@/router'
 import { getToken } from '@/utils/auth'
 import errorCode from '@/utils/errorCode'
 import { tansParams, blobValidate } from "@/utils/ontologywiki"
@@ -10,6 +11,31 @@ import { saveAs } from 'file-saver'
 let downloadLoadingInstance
 // 是否显示重新登录
 export let isRelogin = { show: false }
+
+// 未配置大模型提示是否已弹出，避免并发请求重复弹窗
+let modelSetupPrompting = false
+
+/**
+ * 未配置大模型时的统一引导。
+ *
+ * 同一时刻只弹一个窗：确认后跳转到「模型配置」页面，取消则留在当前页。
+ * 跳转使用前端路由，保留登录态和当前标签页上下文。
+ */
+function promptModelSetup(message) {
+  if (modelSetupPrompting) return
+  modelSetupPrompting = true
+  MessageBox.confirm(
+    message || '尚未配置可用的大模型，请先添加并启用一个模型后再使用该功能。',
+    '请配置模型',
+    { confirmButtonText: '去配置', cancelButtonText: '稍后再说', type: 'warning' }
+  ).then(() => {
+    if (router.currentRoute.path !== '/ontology/settings') {
+      router.push('/ontology/settings')
+    }
+  }).catch(() => {}).finally(() => {
+    modelSetupPrompting = false
+  })
+}
 
 axios.defaults.headers['Content-Type'] = 'application/json;charset=utf-8'
 // 创建axios实例
@@ -100,6 +126,12 @@ service.interceptors.response.use(res => {
     } else if (code === 601) {
       Message({ message: msg, type: 'warning' })
       return Promise.reject('error')
+    } else if (code === 603) {
+      // 未配置大模型：统一弹窗提示，确认后跳转模型配置页，避免用户在业务页反复重试
+      promptModelSetup(msg)
+      const modelError = new Error(msg)
+      modelError.bizCode = 603
+      return Promise.reject(modelError)
     } else if (code !== 200) {
       Notification.error({ title: msg })
       return Promise.reject('error')

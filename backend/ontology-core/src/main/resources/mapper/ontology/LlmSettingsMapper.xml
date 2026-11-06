@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ontologywiki.ontology.mapper.LlmSettingsMapper">
+
+    <!-- 启动兜底：取最新一条启用配置载入内存 -->
+    <select id="selectLatestEnabled" resultType="java.util.LinkedHashMap">
+        select enabled, api_base_url, api_key_enc, model
+        from ontology_llm_settings
+        where enabled = 1
+        order by id desc
+        limit 1
+    </select>
+
+    <!-- 旧版单配置是否存在 -->
+    <select id="selectBySettingId" resultType="java.util.LinkedHashMap">
+        select setting_id from ontology_llm_settings where setting_id = #{settingId}
+    </select>
+
+    <!-- 首次写入旧版单配置 -->
+    <insert id="insertSingleSetting">
+        insert into ontology_llm_settings
+            (setting_id, enabled, api_base_url, api_key_enc, model, update_by, update_time)
+        values
+            (#{settingId}, #{enabled}, #{apiBaseUrl}, #{apiKeyEnc}, #{model}, #{username}, now())
+    </insert>
+
+    <!-- 清空 API Key -->
+    <update id="updateSingleSettingClearKey">
+        update ontology_llm_settings
+        set enabled = #{enabled}, api_base_url = #{apiBaseUrl}, api_key_enc = null,
+            model = #{model}, update_by = #{username}, update_time = now()
+        where setting_id = #{settingId}
+    </update>
+
+    <!-- 覆盖 API Key -->
+    <update id="updateSingleSetting">
+        update ontology_llm_settings
+        set enabled = #{enabled}, api_base_url = #{apiBaseUrl}, api_key_enc = #{apiKeyEnc},
+            model = #{model}, update_by = #{username}, update_time = now()
+        where setting_id = #{settingId}
+    </update>
+
+    <!-- 保留原 API Key，仅更新开关、地址与模型 -->
+    <update id="updateSingleSettingKeepKey">
+        update ontology_llm_settings
+        set enabled = #{enabled}, api_base_url = #{apiBaseUrl},
+            model = #{model}, update_by = #{username}, update_time = now()
+        where setting_id = #{settingId}
+    </update>
+
+    <!-- ==================== 多配置管理 ==================== -->
+
+    <!-- 列表：密钥只返回是否已配置，避免明文外泄 -->
+    <select id="selectAll" resultType="java.util.LinkedHashMap">
+        select id, setting_id, setting_name, provider_type, usage_scene, enabled,
+               api_base_url, model,
+               (api_key_enc is not null and api_key_enc &lt;&gt; '') hasApiKey,
+               update_by, update_time
+        from ontology_llm_settings
+        order by id asc
+    </select>
+
+    <select id="selectById" resultType="java.util.LinkedHashMap">
+        select api_base_url, api_key_enc, model from ontology_llm_settings where id = #{id}
+    </select>
+
+    <insert id="insertConfig" useGeneratedKeys="true" keyProperty="generatedId" keyColumn="id">
+        insert into ontology_llm_settings
+            (setting_name, provider_type, usage_scene, enabled, api_base_url, api_key_enc,
+             model, update_by, update_time)
+        values
+            (#{settingName}, #{providerType}, #{usageScene}, #{enabled}, #{apiBaseUrl}, #{apiKeyEnc},
+             #{model}, #{username}, now())
+    </insert>
+
+    <update id="updateConfigClearKey">
+        update ontology_llm_settings
+        set setting_name = #{settingName}, provider_type = #{providerType}, usage_scene = #{usageScene},
+            enabled = #{enabled}, api_base_url = #{apiBaseUrl}, api_key_enc = null,
+            model = #{model}, update_by = #{username}, update_time = now()
+        where id = #{id}
+    </update>
+
+    <update id="updateConfigWithKey">
+        update ontology_llm_settings
+        set setting_name = #{settingName}, provider_type = #{providerType}, usage_scene = #{usageScene},
+            enabled = #{enabled}, api_base_url = #{apiBaseUrl}, api_key_enc = #{apiKeyEnc},
+            model = #{model}, update_by = #{username}, update_time = now()
+        where id = #{id}
+    </update>
+
+    <update id="updateConfigKeepKey">
+        update ontology_llm_settings
+        set setting_name = #{settingName}, provider_type = #{providerType}, usage_scene = #{usageScene},
+            enabled = #{enabled}, api_base_url = #{apiBaseUrl},
+            model = #{model}, update_by = #{username}, update_time = now()
+        where id = #{id}
+    </update>
+
+    <delete id="deleteById">
+        delete from ontology_llm_settings where id = #{id}
+    </delete>
+
+</mapper>

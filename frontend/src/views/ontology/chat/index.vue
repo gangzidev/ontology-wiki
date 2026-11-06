@@ -976,6 +976,14 @@ export default {
         this._applyAnswerResponse(data, { beforeConfig, beforeChanges, pending, contextLabel })
       }).catch(error => {
         pending.pending = false
+        // 603 表示未配置模型，全局拦截器已弹窗并引导跳转，此处不再追加失败气泡
+        if (error && error.bizCode === 603) {
+          // 同时移除本轮用户消息，避免留下半截对话
+          this.messages = this.messages.filter(item => item !== pending && !(item.role === 'user' && item.content === question))
+          this.question = question
+          this.scrollMessages()
+          return
+        }
         pending.failed = true
         pending.content = error && error.message ? error.message : '回答暂时失败，请检查服务状态后重试。'
         this.loadSessions()

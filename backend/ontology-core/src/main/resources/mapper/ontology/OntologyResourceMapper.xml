@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ontologywiki.ontology.mapper.OntologyResourceMapper">
+
+    <!--
+      动态表名说明：
+      table / idColumn / selectColumns 均来自 OntologyResourceService 中的白名单常量，
+      不接受前端直接传入，因此这里使用 ${} 拼接是安全的。
+    -->
+
+    <!-- 列表查询的 where 条件，供 count 与分页查询共用，避免两处条件不一致 -->
+    <sql id="pageWhere">
+        <where>
+            <if test="excludeSystemIndex">
+                and coalesce(tags, '') &lt;&gt; 'SYSTEM_INDEX'
+            </if>
+            <if test="spaceId != null">
+                and space_id = #{spaceId}
+            </if>
+            <if test="taskId != null">
+                and task_id = #{taskId}
+            </if>
+            <if test="keyword != null and keyword != ''">
+                and concat_ws(' ', ${searchColumns}) like #{keyword}
+            </if>
+        </where>
+    </sql>
+
+    <!-- 工作台统计：各资源总数 -->
+    <select id="countAll" resultType="java.lang.Long">
+        select count(*) from ${table}
+    </select>
+
+    <!-- 列表总数 -->
+    <select id="countPage" resultType="java.lang.Long">
+        select count(*) from ${table}
+        <include refid="pageWhere"/>
+    </select>
+
+    <!-- 分页列表，按主键倒序，保证新数据在前 -->
+    <select id="selectPage" resultType="java.util.LinkedHashMap">
+        select ${selectColumns} from ${table}
+        <include refid="pageWhere"/>
+        order by ${idColumn} desc
+        limit #{limit} offset #{offset}
+    </select>
+
+    <!-- 按主键查单条 -->
+    <select id="selectById" resultType="java.util.LinkedHashMap">
+        select ${selectColumns} from ${table}
+        where ${idColumn} = #{id}
+    </select>
+
+    <!-- 跨表取单列，用于行业空间归属校验 -->
+    <select id="selectColumnById" resultType="java.lang.Object">
+        select ${column} from ${table} where ${idColumn} = #{id}
+    </select>
+
+    <!--
+      动态插入：
+      data 的 key 已在 Service 层做白名单过滤，这里直接拼装列名与占位符。
+      useGeneratedKeys 用于回填自增主键，主键列名由 JDBC 驱动返回，无需显式指定。
+    -->
+    <insert id="insert" useGeneratedKeys="true" keyProperty="generatedId">
+        insert into ${table} (
+        <foreach collection="data" index="column" item="value" separator=",">
+            ${column}
+        </foreach>
+        ) values (
+        <foreach collection="data" item="value" separator=",">
+            #{value}
+        </foreach>
+        )
+    </insert>
+
+    <!-- 动态更新：只更新 data 中出现的列 -->
+    <update id="update">
+        update ${table}
+        <set>
+            <foreach collection="data" index="column" item="value" separator=",">
+                ${column} = #{value}
+            </foreach>
+        </set>
+        where ${idColumn} = #{id}
+    </update>
+
+    <!-- 批量删除 -->
+    <delete id="deleteByIds">
+        delete from ${table} where ${idColumn} in
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </delete>
+
+    <!-- 批量取任务名称，供草案列表展示来源任务 -->
+    <select id="selectTaskNames" resultType="java.util.LinkedHashMap">
+        select task_id, task_name from analysis_task where task_id in
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </select>
+
+    <!-- 行业知识空间可用性校验 -->
+    <select id="countEnabledSpace" resultType="java.lang.Integer">
+        select count(*) from wiki_space where space_id = #{spaceId} and status = #{status}
+    </select>
+
+    <!-- 读取草案快照，用于判断内容是否变化 -->
+    <select id="selectProposalSnapshot" resultType="java.util.LinkedHashMap">
+        select proposal_type, config_json from ontology_proposal where proposal_id = #{proposalId}
+    </select>
+
+    <!-- 草案内容变更后重置为待审核 -->
+    <update id="resetProposalReview">
+        update ontology_proposal
+        set status = #{status}, review_by = null, review_time = null, review_comment = null
+        where proposal_id = #{proposalId}
+    </update>
+
+    <!-- 回写数据源密码密文 -->
+    <update id="updateDatasourcePassword">
+        update ontology_datasource
+        set password_enc = #{passwordEnc}, update_by = #{username}, update_time = now()
+        where datasource_id = #{datasourceId}
+    </update>
+
+</mapper>

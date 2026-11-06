@@ -3,9 +3,12 @@ package com.ontologywiki.ontology.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ontologywiki.ontology.config.OntologyIntegrationProperties;
+import com.ontologywiki.ontology.domain.WikiAssetType;
+import com.ontologywiki.ontology.mapper.LlmSettingsMapper;
+import com.ontologywiki.ontology.mapper.LlmWikiAnalysisMapper;
+import com.ontologywiki.ontology.mapper.WikiAssetMapper;
+import com.ontologywiki.ontology.service.wiki.WikiIndexService;
 import org.springframework.http.*;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.BadSqlGrammarException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestTemplate;
@@ -17,59 +20,96 @@ import java.util.*;
 import java.util.stream.Collectors;
 import java.util.regex.Pattern;
 
-/** Java 内置 LLM Wiki：原始资料与增量生成页面均持久化在本地 MySQL。 */
+/**
+ * Java 内置 LLM Wiki。
+ *
+ * <p>原始资料与增量生成页面均持久化在本地 MySQL：
+ * <ul>
+ *   <li>启动期结构迁移（DDL）保留在本类，因为属于应用引导逻辑；</li>
+ *   <li>业务读写全部下沉至 {@link LlmWikiAnalysisMapper} 与 {@link WikiAssetMapper}；</li>
+ *   <li>本类只负责提示词构建、结果解析、检索排序与路由决策。</li>
+ * </ul>
+ */
 @Service
 public class LlmWikiClient {
+
+    /** 资产启用状态 */
+    private static final String STATUS_ACTIVE = "0";
+
+    /** 系统索引页固定标签 */
+    private static final String SYSTEM_INDEX_TAG = "SYSTEM_INDEX";
+
+    /** 已确认知识条目类型 */
+    private static final String MEMORY_TYPE_KNOWLEDGE_ITEM = "KNOWLEDGE_ITEM";
+
+    /** 分析说明记忆类型 */
+    private static final String MEMORY_TYPE_ANALYSIS_ANSWER = "ANALYSIS_ANSWER";
+
+    /** 已确认状态 */
+    private static final String MEMORY_STATUS_CONFIRMED = "CONFIRMED";
+
+    /** 问答检索：原始资料与 Wiki 页面各自的最大候选数 */
+    private static final int QUERY_SOURCE_LIMIT = 100;
+    private static final int QUERY_PAGE_LIMIT = 200;
+
+    /** 已确认知识：结构化条目与分析说明的最大取数 */
+    private static final int KNOWLEDGE_ITEM_LIMIT = 200;
+    private static final int ANALYSIS_ANSWER_LIMIT = 5;
+
+    /** 已确认知识：无查询条件时默认注入的条目数 */
+    private static final int DEFAULT_KNOWLEDGE_ITEMS = 15;
+
     private final OntologyIntegrationProperties properties;
     private final RestTemplate rest;
-    private final JdbcTemplate jdbc;
     private final CredentialService credentials;
+    private final LlmWikiAnalysisMapper analysisMapper;
+    private final WikiAssetMapper assetMapper;
+    private final LlmSettingsMapper settingsMapper;
+    private final WikiIndexService indexService;
     private final ObjectMapper json = new ObjectMapper();
     private final AnalysisCandidateResolver candidateResolver = new AnalysisCandidateResolver();
     private final WikiLexicalRetriever wikiRetriever = new WikiLexicalRetriever();
 
-    public LlmWikiClient(OntologyIntegrationProperties properties, RestTemplate rest, JdbcTemplate jdbc, CredentialService credentials) {
-        this.properties = properties; this.rest = rest; this.jdbc = jdbc; this.credentials = credentials;
+    public LlmWikiClient(OntologyIntegrationProperties properties, RestTemplate rest,
+                         CredentialService credentials, LlmWikiAnalysisMapper analysisMapper,
+                         WikiAssetMapper assetMapper, LlmSettingsMapper settingsMapper,
+                         WikiIndexService indexService) {
+        this.properties = properties;
+        this.rest = rest;
+        this.credentials = credentials;
+        this.analysisMapper = analysisMapper;
+        this.assetMapper = assetMapper;
+        this.settingsMapper = settingsMapper;
+        this.indexService = indexService;
     }
 
+    /**
+     * 启动时把数据库中的启用配置载入内存，仅作为「数据库不可用时的兜底」。
+     *
+     * <p>模型路由以 usage_scene 为准（见 {@link #configForScene}），内存配置不再承担默认模型职责，
+     * 避免旧的 setting_id=1 单配置与多配置并存时出现「配置了却不生效」。
+     *
+     * <p>注意：建表、加列、数据修正、菜单初始化等结构变更全部由
+     * {@code backend/sql/ontology-wiki.sql}（全新安装）与 {@code backend/sql/ontology-wiki-upgrade.sql}
+     * （存量升级）负责，应用启动不再执行任何 DDL。
+     */
     @PostConstruct
-    public void ensureChatSessionTable() {
-        jdbc.execute("CREATE TABLE IF NOT EXISTS ontology_llm_settings (setting_id tinyint NOT NULL, enabled tinyint(1) NOT NULL DEFAULT 0, api_base_url varchar(1000), api_key_enc text, model varchar(200), update_by varchar(64), update_time datetime, PRIMARY KEY(setting_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-        jdbc.execute("CREATE TABLE IF NOT EXISTS ontology_analysis_memory (memory_id bigint NOT NULL AUTO_INCREMENT, space_id bigint NULL, task_id bigint NOT NULL, proposal_id bigint NULL, memory_type varchar(40) NOT NULL DEFAULT 'ANALYSIS_ANSWER', title varchar(255) NOT NULL, content longtext NOT NULL, source_json longtext NULL, status varchar(30) NOT NULL DEFAULT 'DRAFT', version int NOT NULL DEFAULT 1, created_by varchar(64), create_time datetime, update_by varchar(64), update_time datetime, reviewed_by varchar(64), review_time datetime, PRIMARY KEY(memory_id), KEY idx_analysis_memory_task(task_id,status), KEY idx_analysis_memory_space(space_id,status)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-        jdbc.execute("CREATE TABLE IF NOT EXISTS wiki_chat_session (session_id varchar(64) NOT NULL, space_id bigint NULL, scope_type varchar(20) NOT NULL DEFAULT 'ALL', scope_id bigint NULL, context_state_json longtext NULL, title varchar(200) NOT NULL, created_by varchar(64) NOT NULL, create_time datetime NULL, update_time datetime NULL, PRIMARY KEY(session_id,created_by), KEY idx_wiki_chat_session_user(created_by,update_time)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-        jdbc.execute("CREATE TABLE IF NOT EXISTS wiki_chat_citation (message_id bigint NOT NULL, asset_id bigint NOT NULL, PRIMARY KEY(message_id,asset_id), KEY idx_wiki_chat_citation_asset(asset_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-        try { jdbc.execute("select scope_type from wiki_chat_session where 1=0"); }
-        catch (BadSqlGrammarException e) { jdbc.execute("alter table wiki_chat_session add column scope_type varchar(20) NOT NULL DEFAULT 'ALL' after space_id"); }
-        try { jdbc.execute("select scope_id from wiki_chat_session where 1=0"); }
-        catch (BadSqlGrammarException e) { jdbc.execute("alter table wiki_chat_session add column scope_id bigint NULL after scope_type"); }
-        try { jdbc.execute("select context_state_json from wiki_chat_session where 1=0"); }
-        catch (BadSqlGrammarException e) { jdbc.execute("alter table wiki_chat_session add column context_state_json longtext NULL after scope_id"); }
-        jdbc.update("update wiki_chat_session set scope_type='SPACE',scope_id=space_id where space_id is not null and scope_type='ALL'");
-        try { jdbc.execute("select wiki_space_id from analysis_task where 1=0"); }
-        catch (BadSqlGrammarException e) { jdbc.execute("alter table analysis_task add column wiki_space_id bigint null after source_id"); }
-        try { jdbc.execute("select review_by from ontology_proposal where 1=0"); }
-        catch (BadSqlGrammarException e) { jdbc.execute("alter table ontology_proposal add column review_by varchar(64) null after status"); }
-        try { jdbc.execute("select review_time from ontology_proposal where 1=0"); }
-        catch (BadSqlGrammarException e) { jdbc.execute("alter table ontology_proposal add column review_time datetime null after review_by"); }
-        try { jdbc.execute("select review_comment from ontology_proposal where 1=0"); }
-        catch (BadSqlGrammarException e) { jdbc.execute("alter table ontology_proposal add column review_comment varchar(1000) null after review_time"); }
-        jdbc.update("update ontology_proposal set status='DRAFT' where status='REVIEWED' or (status='APPROVED' and review_by is null)");
-        jdbc.update("INSERT IGNORE INTO sys_menu(menu_id,menu_name,parent_id,order_num,path,component,is_frame,is_cache,menu_type,visible,status,perms,icon,create_by,create_time) VALUES (2043,'草案审核',2005,5,'','','1',0,'F','1','0','ontology:proposals:review','','admin',now())");
-        jdbc.update("INSERT IGNORE INTO sys_role_menu(role_id,menu_id) VALUES (1,2043)");
-        jdbc.update("INSERT IGNORE INTO sys_menu(menu_id,menu_name,parent_id,order_num,path,component,is_frame,is_cache,menu_type,visible,status,perms,icon,create_by,create_time) VALUES (2080,'大模型设置',2008,1,'','','1',0,'F','1','0','ontology:wiki:settings','','admin',now())");
-        jdbc.update("INSERT IGNORE INTO sys_role_menu(role_id,menu_id) VALUES (1,2080)");
-        jdbc.update("update sys_menu set menu_name='行业知识空间',update_by='system',update_time=now() where path='spaces' and component='ontology/spaces/index' and menu_name='Wiki空间'");
-        jdbc.update("update sys_menu set menu_name='业务知识问答',update_by='system',update_time=now() where path='chat' and component='ontology/chat/index' and menu_name in ('Wiki问答','LLM Wiki 问答')");
-        jdbc.update("INSERT IGNORE INTO wiki_chat_session(session_id,space_id,title,created_by,create_time,update_time) SELECT m.session_id,NULL,COALESCE((SELECT SUBSTRING(m2.content,1,80) FROM wiki_chat_message m2 WHERE m2.session_id=m.session_id AND m2.created_by=m.created_by AND m2.role='user' ORDER BY m2.message_id LIMIT 1),'历史问答'),m.created_by,MIN(m.create_time),MAX(m.create_time) FROM wiki_chat_message m WHERE m.created_by IS NOT NULL GROUP BY m.session_id,m.created_by");
+    public void loadSettingsOnStartup() {
         loadStoredSettings();
     }
 
+    /**
+     * 启动时把数据库中的启用配置载入内存，仅作为「数据库不可用时的兜底」。
+     *
+     * <p>模型路由以 usage_scene 为准（见 {@link #configForScene}），
+     * 避免旧的 setting_id=1 单配置与多配置并存时出现「配置了却不生效」。
+     */
     private void loadStoredSettings() {
-        List<Map<String,Object>> rows = jdbc.queryForList("select enabled,api_base_url,api_key_enc,model from ontology_llm_settings where setting_id=1");
+        List<Map<String,Object>> rows = settingsMapper.selectLatestEnabled();
         if (rows.isEmpty()) return;
         Map<String,Object> row = rows.get(0);
         OntologyIntegrationProperties.LlmWiki cfg = properties.getLlmWiki();
-        cfg.setEnabled(Boolean.TRUE.equals(row.get("enabled")) || "1".equals(String.valueOf(row.get("enabled"))));
+        cfg.setEnabled(true);
         cfg.setApiBaseUrl(value(row.get("api_base_url")));
         if (row.get("model") != null) cfg.setModel(String.valueOf(row.get("model")));
         cfg.setApiKey("");
@@ -99,15 +139,16 @@ public class LlmWikiClient {
         } catch (IllegalArgumentException e) { throw new IllegalArgumentException("模型 API 地址必须是有效的 http 或 https 地址，不能包含账号、查询参数或片段"); }
         String effectiveKey = clearKey ? "" : (apiKey.trim().isEmpty() ? cfg.getApiKey() : apiKey.trim());
         if (enabled && effectiveKey == null || enabled && effectiveKey.trim().isEmpty()) throw new IllegalArgumentException("启用模型前请配置 API Key");
-        List<Map<String,Object>> existing = jdbc.queryForList("select setting_id from ontology_llm_settings where setting_id=1");
+        List<Map<String,Object>> existing = settingsMapper.selectBySettingId(1);
         if (existing.isEmpty()) {
-            jdbc.update("insert into ontology_llm_settings(setting_id,enabled,api_base_url,api_key_enc,model,update_by,update_time) values(1,?,?,?,?,?,now())", enabled, baseUrl, effectiveKey.trim().isEmpty() ? null : credentials.encrypt(effectiveKey), model, username);
+            settingsMapper.insertSingleSetting(1, enabled, baseUrl,
+                    effectiveKey.trim().isEmpty() ? null : credentials.encrypt(effectiveKey), model, username);
         } else if (clearKey) {
-            jdbc.update("update ontology_llm_settings set enabled=?,api_base_url=?,api_key_enc=null,model=?,update_by=?,update_time=now() where setting_id=1", enabled, baseUrl, model, username);
+            settingsMapper.updateSingleSettingClearKey(1, enabled, baseUrl, model, username);
         } else if (!apiKey.trim().isEmpty()) {
-            jdbc.update("update ontology_llm_settings set enabled=?,api_base_url=?,api_key_enc=?,model=?,update_by=?,update_time=now() where setting_id=1", enabled, baseUrl, credentials.encrypt(effectiveKey), model, username);
+            settingsMapper.updateSingleSetting(1, enabled, baseUrl, credentials.encrypt(effectiveKey), model, username);
         } else {
-            jdbc.update("update ontology_llm_settings set enabled=?,api_base_url=?,model=?,update_by=?,update_time=now() where setting_id=1", enabled, baseUrl, model, username);
+            settingsMapper.updateSingleSettingKeepKey(1, enabled, baseUrl, model, username);
         }
         cfg.setEnabled(enabled); cfg.setApiBaseUrl(baseUrl); cfg.setModel(model); cfg.setApiKey(effectiveKey);
         return modelSettings();
@@ -132,42 +173,47 @@ public class LlmWikiClient {
     /** 保存答案到当前分析任务指定的草案版本；未指定时兼容旧行为，写入最新版本。 */
     public Map<String, Object> saveAnalysisAnswer(long taskId, Long requestedProposalId, String answer, boolean confirm, String username) {
         if (answer == null || answer.trim().isEmpty() || answer.length() > 60000) throw new IllegalArgumentException("分析答案不能为空且不超过60000字");
-        Map<String, Object> task = jdbc.queryForMap("select task_name,wiki_space_id from analysis_task where task_id=?", taskId);
+        Map<String, Object> task = analysisMapper.selectTaskInfo(taskId);
+        // 未指定草案时取最新版本，指定时必须属于当前任务
         List<Map<String, Object>> proposals = requestedProposalId == null
-                ? jdbc.queryForList("select proposal_id,config_json from ontology_proposal where task_id=? order by proposal_id desc limit 1", taskId)
-                : jdbc.queryForList("select proposal_id,config_json from ontology_proposal where task_id=? and proposal_id=? limit 1", taskId, requestedProposalId);
+                ? analysisMapper.selectLatestProposal(taskId)
+                : analysisMapper.selectProposal(taskId, requestedProposalId);
         if (requestedProposalId != null && proposals.isEmpty()) throw new IllegalArgumentException("配置草案不存在或不属于当前分析任务");
         Long proposalId = proposals.isEmpty() ? null : ((Number) proposals.get(0).get("proposal_id")).longValue();
-        int version = 1;
-        List<Map<String, Object>> versions = jdbc.queryForList("select coalesce(max(version),0) version from ontology_analysis_memory where task_id=?", taskId);
-        if (!versions.isEmpty() && versions.get(0).get("version") != null) version = ((Number) versions.get(0).get("version")).intValue() + 1;
-        String status = confirm ? "CONFIRMED" : "DRAFT";
+        Integer maxVersion = analysisMapper.selectMaxVersion(taskId);
+        int version = (maxVersion == null ? 0 : maxVersion) + 1;
+        String status = confirm ? MEMORY_STATUS_CONFIRMED : "DRAFT";
         String sourceJson = "{}";
         Map<String,Object> savedConfig = Collections.emptyMap();
         try {
-            Map<String, Object> source = new LinkedHashMap<>(); source.put("taskId", taskId); source.put("proposalId", proposalId); source.put("kind", "ANALYSIS_ANSWER"); sourceJson = json.writeValueAsString(source);
+            Map<String, Object> source = new LinkedHashMap<>(); source.put("taskId", taskId); source.put("proposalId", proposalId); source.put("kind", MEMORY_TYPE_ANALYSIS_ANSWER); sourceJson = json.writeValueAsString(source);
             if (!proposals.isEmpty()) {
                 Map<String, Object> config = json.readValue(String.valueOf(proposals.get(0).get("config_json")), new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() { });
                 config.put("llmAnswer", answer.trim()); config.put("answerStatus", status); config.put("answerVersion", version);
                 savedConfig = config;
                 if (config.get("citedSources") != null) { source.put("citedSources", config.get("citedSources")); sourceJson = json.writeValueAsString(source); }
-                jdbc.update("update ontology_proposal set config_json=?,update_by=?,update_time=now() where proposal_id=?", json.writeValueAsString(config), username, proposalId);
+                analysisMapper.updateProposalConfig(proposalId, json.writeValueAsString(config), username);
             }
         } catch (Exception e) { throw new IllegalStateException("分析答案保存失败"); }
         String memoryContent = confirm ? analysisKnowledgeMarkdown(answer.trim(), savedConfig) : answer.trim();
-        jdbc.update("insert into ontology_analysis_memory(space_id,task_id,proposal_id,memory_type,title,content,source_json,status,version,created_by,create_time,update_by,update_time,reviewed_by,review_time) values(?,?,?,'ANALYSIS_ANSWER',?,?,?,?,?,?,now(),?,now(),?,case when ?='CONFIRMED' then now() else null end)",
-                task.get("wiki_space_id"), taskId, proposalId, String.valueOf(task.get("task_name")) + " · 分析答案 v" + version, memoryContent, sourceJson, status, version, username, username, confirm ? username : null, status);
-        jdbc.update("update analysis_task set summary=?,update_by=?,update_time=now() where task_id=?", clip(answer.trim(), 60000), username, taskId);
-        List<Map<String, Object>> latest = jdbc.queryForList("select memory_id,task_id,proposal_id,memory_type,title,content,status,version,created_by,create_time,reviewed_by,review_time from ontology_analysis_memory where task_id=? order by memory_id desc limit 1", taskId);
+        analysisMapper.insertAnswerMemory(task.get("wiki_space_id"), taskId, proposalId,
+                String.valueOf(task.get("task_name")) + " · 分析答案 v" + version,
+                memoryContent, sourceJson, status, version, username, confirm);
+        analysisMapper.updateTaskSummary(taskId, clip(answer.trim(), 60000), username);
+        List<Map<String, Object>> latest = analysisMapper.selectLatestMemory(taskId);
         if (confirm && !latest.isEmpty()) {
             Map<String,Object> memory = latest.get(0);
             String tag = "ANALYSIS_MEMORY:" + memory.get("memory_id");
             String title = "分析知识 · " + task.get("task_name") + " · v" + version;
             String content = "# " + title + "\n\n" + memoryContent + "\n\n> 来源：分析任务 #" + taskId + "，配置草案 #" + (proposalId == null ? "—" : proposalId) + "。该页面由分析者确认后沉淀，可在后续分析中作为已确认知识参考。";
-            List<Map<String,Object>> pages = jdbc.queryForList("select asset_id from wiki_asset where tags=? limit 1", tag);
-            if (pages.isEmpty()) jdbc.update("insert into wiki_asset(space_id,asset_name,asset_type,description,content,tags,status,create_by,create_time,update_by,update_time) values(?,?,'WIKI_PAGE',?,?,?,'0',?,now(),?,now())", task.get("wiki_space_id"), title, "已确认分析知识", content, tag, username, username);
-            else jdbc.update("update wiki_asset set space_id=?,asset_name=?,description=?,content=?,update_by=?,update_time=now() where asset_id=?", task.get("wiki_space_id"), title, "已确认分析知识", content, username, pages.get(0).get("asset_id"));
+            List<Map<String,Object>> pages = assetMapper.selectPageByTag(tag);
+            if (pages.isEmpty()) assetMapper.insertKnowledgePage(task.get("wiki_space_id"), title, "已确认分析知识", content, tag, username);
+            else assetMapper.updateKnowledgePage(task.get("wiki_space_id"), title, "已确认分析知识", content, username, ((Number) pages.get(0).get("asset_id")).longValue());
             refreshIndex();
+            // 拆出结构化知识条目，提升下次分析的召回精度
+            if (!savedConfig.isEmpty()) {
+                saveKnowledgeItems(taskId, task.get("wiki_space_id"), proposalId, savedConfig, version, username);
+            }
         }
         return latest.isEmpty() ? Collections.<String, Object>emptyMap() : latest.get(0);
     }
@@ -177,7 +223,7 @@ public class LlmWikiClient {
     public Map<String,Object> saveAnalysisResult(long taskId, Long proposalId, String answer, List<?> requestedChanges, String username) {
         if (answer == null || answer.trim().isEmpty()) throw new IllegalArgumentException("请先完成分析说明");
         if (proposalId == null) throw new IllegalArgumentException("当前分析没有关联配置草案，无法保存结构");
-        List<Map<String,Object>> proposals = jdbc.queryForList("select config_json from ontology_proposal where task_id=? and proposal_id=? limit 1", taskId, proposalId);
+        List<Map<String,Object>> proposals = analysisMapper.selectProposalConfig(taskId, proposalId);
         if (proposals.isEmpty()) throw new IllegalArgumentException("配置草案不存在或不属于当前分析任务");
         Map<String,Object> base = readAnalysisConfig(proposals.get(0).get("config_json"));
         List<Map<String,Object>> changes = normalizeAnalysisChanges(base, requestedChanges, true);
@@ -185,18 +231,17 @@ public class LlmWikiClient {
         updated.put("analysisCorrections", mergeAnalysisChangeMarkers(base,
                 normalizeAnalysisChanges(base, base.get("analysisCorrections") instanceof List ? (List<?>) base.get("analysisCorrections") : Collections.emptyList(), false, false), changes));
         if (!changes.isEmpty()) {
-            jdbc.update("update ontology_proposal set config_json=?,status='DRAFT',review_by=null,review_time=null,review_comment=null,update_by=?,update_time=now() where task_id=? and proposal_id=?",
-                    writeJson(updated), username, taskId, proposalId);
+            analysisMapper.updateProposalConfigAndResetReview(taskId, proposalId, writeJson(updated), "DRAFT", username);
         }
         return saveAnalysisAnswer(taskId, proposalId, answer, true, username);
     }
 
     public List<Map<String, Object>> listAnalysisMemory(long taskId) {
-        return jdbc.queryForList("select memory_id,task_id,proposal_id,memory_type,title,content,status,version,created_by,create_time,reviewed_by,review_time from ontology_analysis_memory where task_id=? order by memory_id desc", taskId);
+        return analysisMapper.selectMemoriesByTask(taskId);
     }
 
     public Map<String, Object> latestAnalysisMemory(long taskId) {
-        List<Map<String, Object>> rows = jdbc.queryForList("select memory_id,task_id,proposal_id,memory_type,title,content,status,version,created_by,create_time,reviewed_by,review_time from ontology_analysis_memory where task_id=? order by memory_id desc limit 1", taskId);
+        List<Map<String, Object>> rows = analysisMapper.selectLatestMemory(taskId);
         return rows.isEmpty() ? Collections.<String, Object>emptyMap() : rows.get(0);
     }
 
@@ -204,7 +249,7 @@ public class LlmWikiClient {
     public Map<String, Object> refineAnalysisAnswer(long taskId, String currentAnswer, String question) {
         if (!enabled()) throw new IllegalStateException("内置 LLM Wiki 未配置模型 API");
         if (question == null || question.trim().isEmpty()) throw new IllegalArgumentException("请输入希望优化的内容");
-        Map<String, Object> task = jdbc.queryForMap("select wiki_space_id from analysis_task where task_id=?", taskId);
+        Map<String, Object> task = analysisMapper.selectTaskSpace(taskId);
         Long spaceId = task.get("wiki_space_id") == null ? null : ((Number) task.get("wiki_space_id")).longValue();
         String prompt = "当前分析答案：\n" + clip(currentAnswer == null ? "" : currentAnswer, 30000) + "\n\n分析者希望优化：\n" + clip(question.trim(), 8000) + "\n\n请结合当前分析任务的 Wiki 资料、配置候选和已确认分析知识，输出一份可以直接替换当前答案的完整中文版本。保留可验证事实，明确标记仍需确认的内容，不要输出 JSON，不要添加与任务无关的内容。";
         Map<String, Object> result = queryResult(prompt, false, spaceId, Collections.<Map<String, Object>>emptyList(), "ANALYSIS", taskId);
@@ -213,17 +258,85 @@ public class LlmWikiClient {
 
     /** 给后续分析和分析问答提供空间级已确认知识。 */
     public String confirmedKnowledgeContext(Long taskId, Long spaceId) {
-        List<Map<String, Object>> rows;
+        return confirmedKnowledgeContext(taskId, spaceId, null);
+    }
+
+    /** 给后续分析和分析问答提供空间级已确认知识，按 query 对结构化条目做相关性排序。 */
+    public String confirmedKnowledgeContext(Long taskId, Long spaceId, String query) {
         if (taskId == null && spaceId == null) return "";
-        if (taskId != null && spaceId != null) rows = jdbc.queryForList("select title,content,status,version,task_id from ontology_analysis_memory where status='CONFIRMED' and (task_id=? or space_id=?) order by update_time desc,memory_id desc limit 80", taskId, spaceId);
-        else if (taskId != null) rows = jdbc.queryForList("select title,content,status,version,task_id from ontology_analysis_memory where status='CONFIRMED' and task_id=? order by update_time desc,memory_id desc limit 80", taskId);
-        else rows = jdbc.queryForList("select title,content,status,version,task_id from ontology_analysis_memory where status='CONFIRMED' and space_id=? order by update_time desc,memory_id desc limit 80", spaceId);
+        // 1. 取结构化知识条目（最多 200 条）
+        List<Map<String,Object>> itemRows = queryConfirmedMemory(taskId, spaceId, "KNOWLEDGE_ITEM", 200);
+        // 2. 取分析说明摘要（最多 5 条）
+        List<Map<String,Object>> answerRows = queryConfirmedMemory(taskId, spaceId, "ANALYSIS_ANSWER", 5);
+        // 3. 按 query 排序 KNOWLEDGE_ITEM；无 query 取最新 15 条
+        List<Map<String,Object>> relevantItems;
+        if (query != null && !query.trim().isEmpty() && !itemRows.isEmpty()) {
+            List<Map<String,Object>> adapted = new ArrayList<>();
+            for (Map<String,Object> row : itemRows) {
+                Map<String,Object> a = new LinkedHashMap<>();
+                a.put("asset_name", row.get("title"));
+                a.put("description", row.get("keywords") != null && !String.valueOf(row.get("keywords")).trim().isEmpty()
+                        ? row.get("keywords") : row.get("title"));
+                a.put("domain_name", "");
+                a.put("_ref", row);
+                adapted.add(a);
+            }
+            List<Map<String,Object>> ranked = wikiRetriever.rank(adapted, query, 15);
+            relevantItems = new ArrayList<>();
+            for (Map<String,Object> a : ranked) {
+                @SuppressWarnings("unchecked") Map<String,Object> orig = (Map<String,Object>) a.get("_ref");
+                if (orig != null) relevantItems.add(orig);
+            }
+        } else {
+            relevantItems = itemRows.size() > 15 ? itemRows.subList(0, 15) : itemRows;
+        }
+        // 4. 拼装上下文
         StringBuilder out = new StringBuilder();
-        for (Map<String, Object> row : rows) out.append("\n- ").append(row.get("title")).append("（任务 #").append(row.get("task_id")).append("，版本 ").append(row.get("version")).append("）\n  ").append(clip(String.valueOf(row.get("content")), 3000));
+        if (!relevantItems.isEmpty()) {
+            out.append("【结构化知识条目】\n");
+            for (Map<String,Object> row : relevantItems) {
+                out.append("- ").append(row.get("title")).append("：")
+                   .append(clip(String.valueOf(row.get("content")), 200)).append("\n");
+            }
+        }
+        if (!answerRows.isEmpty()) {
+            out.append("\n【分析说明摘要】\n");
+            for (Map<String,Object> row : answerRows) {
+                out.append("\n- ").append(row.get("title")).append("（任务 #").append(row.get("task_id"))
+                   .append("，版本 ").append(row.get("version")).append("）\n  ")
+                   .append(clip(String.valueOf(row.get("content")), 1500));
+            }
+        }
         return out.toString().trim();
     }
 
+    private List<Map<String,Object>> queryConfirmedMemory(Long taskId, Long spaceId, String type, int limit) {
+        if (taskId != null && spaceId != null) {
+            return analysisMapper.selectConfirmedItemsByTaskAndSpace(MEMORY_STATUS_CONFIRMED, type, taskId, spaceId, limit);
+        } else if (taskId != null) {
+            return analysisMapper.selectConfirmedItemsByTask(MEMORY_STATUS_CONFIRMED, type, taskId, limit);
+        }
+        return analysisMapper.selectConfirmedItemsBySpace(MEMORY_STATUS_CONFIRMED, type, spaceId, limit);
+    }
+
+    /**
+     * 是否存在可用的模型配置。
+     *
+     * <p>以数据库中的启用配置为准：只要有任一启用的配置能解析出地址和密钥即视为可用，
+     * 不再依赖旧的内存单配置，避免「大模型管理里已启用、系统却判定未启用」。
+     */
     public boolean enabled() {
+        try {
+            List<Map<String,Object>> rows = analysisMapper.selectEnabledSettings(1);
+            for (Map<String,Object> row : rows) {
+                if (value(row.get("api_base_url")).trim().isEmpty()) continue;
+                // Ollama 等本地接入允许没有 API Key
+                if ("OLLAMA".equalsIgnoreCase(value(row.get("provider_type")))) return true;
+                if (!value(row.get("api_key_enc")).trim().isEmpty()) return true;
+            }
+        } catch (Exception ignored) {
+            // 表尚未创建等异常时回退到内存配置判断
+        }
         OntologyIntegrationProperties.LlmWiki cfg = properties.getLlmWiki();
         return cfg != null && cfg.isEnabled() && text(cfg.getApiBaseUrl()) != null && text(cfg.getApiKey()) != null;
     }
@@ -262,13 +375,16 @@ public class LlmWikiClient {
         requireEnabled();
         if (text(question) == null || question.length() > 100000) throw new IllegalArgumentException("问题不能为空且不超过100000字");
         boolean analysisScope = "ANALYSIS".equals(scopeType);
-        String assetFilter = "ASSET".equals(scopeType) ? " and (asset_id=? or tags=?)" : (analysisScope && spaceId == null) ? " and 1=0" : spaceId == null ? "" : " and space_id=?";
-        String sourceTypes = "ASSET".equals(scopeType) ? "asset_type<>'WIKI_PAGE'" : "asset_type not in ('WIKI_PAGE','URL')";
-        String sourceSql = "select asset_id,asset_name,asset_type,domain_name,description from wiki_asset where status='0' and " + sourceTypes + " and content is not null and char_length(trim(content))>0" + assetFilter + " order by update_time desc,asset_id desc limit 100";
-        String pageSql = "select asset_id,asset_name,asset_type,domain_name,description from wiki_asset where status='0' and asset_type='WIKI_PAGE' and coalesce(tags,'')<>'SYSTEM_INDEX' and content is not null and char_length(trim(content))>0" + assetFilter + " order by update_time desc,asset_id desc limit 200";
-        Object[] filterArgs = "ASSET".equals(scopeType) ? new Object[] {scopeId, "SOURCE:" + scopeId} : (spaceId == null ? new Object[0] : new Object[] {spaceId});
-        List<Map<String, Object>> sources = analysisScope ? new ArrayList<>() : jdbc.queryForList(sourceSql, filterArgs);
-        List<Map<String, Object>> pages = analysisScope ? new ArrayList<>() : jdbc.queryForList(pageSql, filterArgs);
+        boolean assetScope = "ASSET".equals(scopeType);
+        String sourceTag = scopeId == null ? null : "SOURCE:" + scopeId;
+
+        // 分析范围内不检索 Wiki，仅依赖草案候选；其余范围按资产 / 空间 / 全库取候选
+        List<Map<String, Object>> sources = analysisScope ? new ArrayList<>()
+                : assetMapper.selectQuerySources(STATUS_ACTIVE, assetScope, WikiAssetType.WIKI_PAGE.getCode(),
+                        scopeId, sourceTag, spaceId, QUERY_SOURCE_LIMIT);
+        List<Map<String, Object>> pages = analysisScope ? new ArrayList<>()
+                : assetMapper.selectQueryPages(STATUS_ACTIVE, WikiAssetType.WIKI_PAGE.getCode(), SYSTEM_INDEX_TAG,
+                        assetScope, scopeId, sourceTag, spaceId, QUERY_PAGE_LIMIT);
         List<Map<String, Object>> index = new ArrayList<>(); index.addAll(pages); index.addAll(sources);
         String conversation = conversationText(history);
         String retrievalQuestion = clip(question, 2000) + (conversation.isEmpty() ? "" : "\n会话上下文：" + clip(conversation, 1600));
@@ -276,7 +392,7 @@ public class LlmWikiClient {
         String taskContext = String.valueOf(analysisState.getOrDefault("context", ""));
         List<Map<String, Object>> selected = analysisScope ? Collections.<Map<String, Object>>emptyList() : wikiRetriever.rank(index, retrievalQuestion, 3);
         String context = analysisScope ? "" : selected.isEmpty() ? "暂无匹配的 Wiki 资料。" : selected.stream().map(r -> {
-            Map<String,Object> content = jdbc.queryForMap("select content from wiki_asset where asset_id=?", ((Number) r.get("asset_id")).longValue());
+            Map<String,Object> content = assetMapper.selectAssetContent(((Number) r.get("asset_id")).longValue()).stream().findFirst().orElse(Collections.emptyMap());
             String evidence = wikiRetriever.evidenceSnippet(value(content.get("content")), retrievalQuestion, 1200);
             return "[" + r.get("asset_type") + "] " + r.get("asset_name") + "\n" + evidence;
         }).collect(Collectors.joining("\n\n"));
@@ -284,7 +400,7 @@ public class LlmWikiClient {
                 ? "你是本体分析结果校对助手。只依据本轮提供的少量草案候选和会话焦点回答，不要假设未提供的字段。精确修改由服务端按草案候选生成；只有无法确定目标或修改内容时才在 changes 中提出候选修正。不得编造候选 ID。只返回 JSON：{\"answer\":\"面向用户的中文说明\",\"changes\":[{\"category\":\"properties\",\"id\":\"候选 ID\",\"field\":\"dataType\",\"value\":\"TEXT\",\"reason\":\"修改原因\"}]}。changes 只能修改提供候选中的可编辑字段。目标不唯一时先追问，changes 返回空数组。不要返回配置草案 JSON、Wiki Markdown 或泛化资料摘要。\n\n当前分析任务与相关候选：\n" + clip(taskContext, 4500)
                 : "请根据以下本体 Wiki 页面、来源资料和分析任务上下文回答问题；业务问题没有资料证据时，明确说明当前资料中未找到依据，不要猜测。若用户是在问候或闲聊，请自然、简短地回应，不要求 Wiki 资料。分析任务中的候选配置尚待人工审核。中文作答，并结合对话上下文回答本轮问题。\n\n资料：\n" + clip(context, 4200) + (taskContext.isEmpty() ? "" : "\n\n关联分析任务与候选内容：\n" + clip(taskContext, 1500));
         prompt += (conversation.isEmpty() ? "" : "\n\n此前对话：\n" + clip(conversation, 1800)) + "\n\n本轮问题：\n" + clipQuestion(question, 1800);
-        String rawAnswer = openAiText(prompt);
+        String rawAnswer = openAiText(prompt, analysisScope ? "ANALYSIS" : "FAST");
         JsonNode analysisReply = analysisScope ? parse(rawAnswer) : null;
         String answer = analysisScope && analysisReply != null && analysisReply.path("answer").isTextual()
                 ? analysisReply.path("answer").asText() : rawAnswer;
@@ -334,8 +450,8 @@ public class LlmWikiClient {
     private Map<String,Object> analysisTaskState(Long taskId, Long proposalId, List<?> previousChanges, String question, Map<String, Object> savedContextState, boolean allowDeterministicChange) {
         if (taskId == null) return Collections.emptyMap();
         Map<String,Object> task = proposalId == null
-                ? jdbc.queryForMap("select t.task_name,t.scope,t.status,t.summary,t.wiki_space_id,d.name datasource_name,d.db_type,d.database_name,p.proposal_id,p.config_json from analysis_task t left join ontology_datasource d on d.datasource_id=t.source_id left join ontology_proposal p on p.proposal_id=(select p2.proposal_id from ontology_proposal p2 where p2.task_id=t.task_id order by p2.update_time desc,p2.proposal_id desc limit 1) where t.task_id=?", taskId)
-                : jdbc.queryForMap("select t.task_name,t.scope,t.status,t.summary,t.wiki_space_id,d.name datasource_name,d.db_type,d.database_name,p.proposal_id,p.config_json from analysis_task t left join ontology_datasource d on d.datasource_id=t.source_id left join ontology_proposal p on p.proposal_id=? and p.task_id=t.task_id where t.task_id=?", proposalId, taskId);
+                ? analysisMapper.selectTaskAnalysisContext(taskId)
+                : analysisMapper.selectTaskAnalysisContextByProposal(taskId, proposalId);
         Map<String,Object> baseConfig = readAnalysisConfig(task.get("config_json"));
         List<Map<String,Object>> changes = normalizeAnalysisChanges(baseConfig, previousChanges, true);
         Map<String,Object> workingConfig = applyAnalysisChanges(baseConfig, changes);
@@ -657,16 +773,18 @@ public class LlmWikiClient {
     /** 把单份原始资产整理成一张可持续维护的 Wiki 页面。 */
     public Map<String,Object> ingestAsset(long assetId) {
         requireEnabled();
-        Map<String,Object> source = jdbc.queryForMap("select asset_id,space_id,asset_name,asset_type,domain_name,description,content from wiki_asset where asset_id=? and status='0'", assetId);
+        List<Map<String,Object>> sourceRows = assetMapper.selectSourceAsset(assetId, STATUS_ACTIVE);
+        if (sourceRows.isEmpty()) throw new IllegalArgumentException("Wiki 资产不存在或已停用: " + assetId);
+        Map<String,Object> source = sourceRows.get(0);
         String prompt = "请把输入的业务资料整理成一张持久化 Wiki 页面。保留可核验事实、术语、规则及来源，不推测缺失信息。只返回 JSON：{\"title\":\"...\",\"summary\":\"...\",\"content\":\"Markdown...\"}。\n资料标题：" + source.get("asset_name") + "\n资料类型：" + source.get("asset_type") + "\n业务域：" + source.get("domain_name") + "\n说明：" + source.get("description") + "\n正文：\n" + clip(String.valueOf(source.get("content")), 30000);
-        JsonNode page = parse(openAiText(prompt));
+        JsonNode page = parse(openAiText(prompt, "WIKI"));
         if (page == null || !page.path("content").isTextual() || page.path("content").asText().trim().isEmpty()) throw new IllegalStateException("模型未返回有效 Wiki 页面 JSON");
         String title = clip(page.path("title").asText(String.valueOf(source.get("asset_name"))), 200);
         String content = clip(page.path("content").asText(), 1000000);
         String tag = "SOURCE:" + assetId;
-        List<Map<String,Object>> existing = jdbc.queryForList("select asset_id from wiki_asset where asset_type='WIKI_PAGE' and tags=? limit 1", tag);
-        if (existing.isEmpty()) jdbc.update("insert into wiki_asset(space_id,asset_name,asset_type,domain_name,description,content,tags,status,create_by,create_time,update_by,update_time) values(?,?,'WIKI_PAGE',?,?,?,?,'0','system',now(),'system',now())", source.get("space_id"), title, source.get("domain_name"), clip(page.path("summary").asText("来源资料摘要"),1000), content, tag);
-        else jdbc.update("update wiki_asset set space_id=?,asset_name=?,domain_name=?,description=?,content=?,update_by='system',update_time=now() where asset_id=?", source.get("space_id"), title, source.get("domain_name"), clip(page.path("summary").asText("来源资料摘要"),1000), content, existing.get(0).get("asset_id"));
+        List<Map<String,Object>> existing = assetMapper.selectPageBySourceTag(WikiAssetType.WIKI_PAGE.getCode(), tag);
+        if (existing.isEmpty()) assetMapper.insertIngestedPage(source.get("space_id") == null ? null : ((Number) source.get("space_id")).longValue(), title, WikiAssetType.WIKI_PAGE.getCode(), source.get("domain_name"), clip(page.path("summary").asText("来源资料摘要"),1000), content, tag, STATUS_ACTIVE);
+        else assetMapper.updateIngestedPage(source.get("space_id") == null ? null : ((Number) source.get("space_id")).longValue(), title, source.get("domain_name"), clip(page.path("summary").asText("来源资料摘要"),1000), content, ((Number) existing.get(0).get("asset_id")).longValue());
         refreshIndex();
         Map<String,Object> result = new LinkedHashMap<>(); result.put("title", title); result.put("sourceId", assetId); result.put("updated", !existing.isEmpty()); return result;
     }
@@ -685,36 +803,136 @@ public class LlmWikiClient {
             URI source = URI.create(url == null ? "" : url.trim());
             if (!("http".equalsIgnoreCase(source.getScheme()) || "https".equalsIgnoreCase(source.getScheme())) || source.getHost() == null || source.getUserInfo() != null) throw new IllegalArgumentException();
         } catch (IllegalArgumentException e) { throw new IllegalArgumentException("来源地址必须是有效的 http 或 https URL，且不能包含账号凭证"); }
-        String value = url.trim(); jdbc.update("insert into wiki_asset(asset_name,asset_type,description,content,status,create_by,create_time,update_by,update_time) values(?,?,?,?, '0','system',now(),'system',now())", value, "URL", "URL 待整理来源", value);
+        assetMapper.insertUrlSource(url.trim());
         return Collections.singletonMap("saved", true);
     }
 
-    public Object listPages() { return jdbc.queryForList("select asset_id id,asset_name slug,asset_name title,domain_name,description,content,update_time from wiki_asset where asset_type='WIKI_PAGE' and coalesce(tags,'')<>'SYSTEM_INDEX' and status='0' order by update_time desc,asset_id desc"); }
-    public Object getPage(String slug) { List<Map<String,Object>> rows=jdbc.queryForList("select asset_id id,asset_name slug,asset_name title,domain_name,description,content,update_time from wiki_asset where asset_type='WIKI_PAGE' and asset_name=? and status='0' limit 1", segment(slug)); if(rows.isEmpty()) throw new IllegalArgumentException("Wiki 页面不存在"); return rows.get(0); }
+    public Object listPages() { return assetMapper.selectPages(WikiAssetType.WIKI_PAGE.getCode(), STATUS_ACTIVE); }
+    public Object getPage(String slug) { List<Map<String,Object>> rows=assetMapper.selectPageBySlug(WikiAssetType.WIKI_PAGE.getCode(), segment(slug), STATUS_ACTIVE); if(rows.isEmpty()) throw new IllegalArgumentException("Wiki 页面不存在"); return rows.get(0); }
     public Object createPage(Map<String,String> body) { return createPage(body, null); }
-    public Object createPage(Map<String,String> body, Long spaceId) { if(body==null||text(body.get("slug"))==null) throw new IllegalArgumentException("Wiki 页面标题不能为空"); String slug=clip(segment(body.get("slug")),200); jdbc.update("insert into wiki_asset(space_id,asset_name,asset_type,description,content,status,create_by,create_time,update_by,update_time) values(?,?,'WIKI_PAGE','人工维护页面',?,'0','system',now(),'system',now())",spaceId,slug,clip(body.get("content"),1000000)); refreshIndex(); return getPage(slug); }
-    public Object updatePage(String slug,Map<String,String> body) { String key=segment(slug); int n=jdbc.update("update wiki_asset set content=?,update_by='system',update_time=now() where asset_type='WIKI_PAGE' and asset_name=? and status='0'",clip(body==null?null:body.get("content"),1000000),key); if(n==0) throw new IllegalArgumentException("Wiki 页面不存在"); refreshIndex(); return getPage(key); }
-    public Object deletePage(String slug) { int n=jdbc.update("update wiki_asset set status='1',update_by='system',update_time=now() where asset_type='WIKI_PAGE' and asset_name=?",segment(slug)); refreshIndex(); return n>0; }
-    public Object categoryPages(String category) { return jdbc.queryForList("select asset_id id,asset_name slug,domain_name,description,update_time from wiki_asset where asset_type='WIKI_PAGE' and status='0' and domain_name=? order by update_time desc",category); }
+    public Object createPage(Map<String,String> body, Long spaceId) { if(body==null||text(body.get("slug"))==null) throw new IllegalArgumentException("Wiki 页面标题不能为空"); String slug=clip(segment(body.get("slug")),200); assetMapper.insertPage(spaceId, slug, WikiAssetType.WIKI_PAGE.getCode(), "人工维护页面", clip(body.get("content"),1000000), STATUS_ACTIVE); refreshIndex(); return getPage(slug); }
+    public Object updatePage(String slug,Map<String,String> body) { String key=segment(slug); int n=assetMapper.updatePageContent(clip(body==null?null:body.get("content"),1000000), WikiAssetType.WIKI_PAGE.getCode(), key, STATUS_ACTIVE); if(n==0) throw new IllegalArgumentException("Wiki 页面不存在"); refreshIndex(); return getPage(key); }
+    public Object deletePage(String slug) { int n=assetMapper.softDeletePage("1", WikiAssetType.WIKI_PAGE.getCode(), segment(slug)); refreshIndex(); return n>0; }
+    public Object categoryPages(String category) { return assetMapper.selectPagesByCategory(WikiAssetType.WIKI_PAGE.getCode(), STATUS_ACTIVE, category); }
     public Object fileTree() { return listPages(); }
     public Object fileContent(String path) { return getPage(path.replaceFirst("^wiki/","").replaceFirst("\\.md$","")); }
-    public Object index() { List<Map<String,Object>> rows=jdbc.queryForList("select content from wiki_asset where asset_type='WIKI_PAGE' and tags='SYSTEM_INDEX' and status='0' limit 1"); return rows.isEmpty()?Collections.singletonMap("content","# Wiki Index\\n暂无已整理页面"):rows.get(0); }
-    public Object log() { return jdbc.queryForList("select role,content,create_time from wiki_chat_message order by message_id desc limit 100"); }
+    public Object index() { List<Map<String,Object>> rows=assetMapper.selectSystemIndex(WikiAssetType.WIKI_PAGE.getCode(), SYSTEM_INDEX_TAG, STATUS_ACTIVE); return rows.isEmpty()?Collections.singletonMap("content","# Wiki Index\\n暂无已整理页面"):rows.get(0); }
+    public Object log() { return analysisMapper.selectRecentChatMessages(100); }
 
+    /** 把草案中的对象、关系、术语拆成独立的结构化知识条目，便于下次分析按相关性精确召回。 */
+    private void saveKnowledgeItems(long taskId, Object spaceId, Long proposalId,
+            Map<String,Object> config, int version, String username) {
+        List<Map<String,Object>> items = new ArrayList<>();
+        collectItems(items, config, "objects",   "对象");
+        collectItems(items, config, "relations", "关系");
+        collectItems(items, config, "terms",     "术语");
+        for (Map<String,Object> item : items) {
+            String name  = value(item.get("name"));
+            String label = value(item.get("label"));
+            String desc  = value(item.get("description"));
+            String table = value(item.get("table"));
+            if (name.isEmpty() && label.isEmpty()) continue;
+            String itemType = String.valueOf(item.get("_itemType"));
+            String displayName = label.isEmpty() ? name : label + "（" + name + "）";
+            String title    = itemType + "：" + displayName;
+            String content  = desc.isEmpty() ? title : clip(desc, 300);
+            Set<String> kws = new LinkedHashSet<>();
+            if (!name.isEmpty())  kws.add(name);
+            if (!label.isEmpty()) kws.add(label);
+            if (!table.isEmpty()) kws.add(table);
+            String keywords = String.join(",", kws);
+            try {
+                analysisMapper.insertKnowledgeItem(spaceId, taskId, proposalId,
+                        title, content, keywords, "{\"kind\":\"KNOWLEDGE_ITEM\"}", version, username);
+            } catch (Exception ignored) { /* 单条失败不阻断整体 */ }
+        }
+    }
+
+    private void collectItems(List<Map<String,Object>> out, Map<String,Object> config,
+            String key, String typeLabel) {
+        Object raw = config.get(key);
+        if (!(raw instanceof List)) return;
+        for (Object item : (List<?>) raw) {
+            if (!(item instanceof Map)) continue;
+            @SuppressWarnings("unchecked")
+            Map<String,Object> m = new LinkedHashMap<>((Map<String,Object>) item);
+            m.put("_itemType", typeLabel);
+            out.add(m);
+        }
+    }
+
+    /** 重建系统索引页；具体逻辑统一由 {@link WikiIndexService} 维护，避免两处实现漂移。 */
     void refreshIndex() {
-        List<Map<String,Object>> pages=jdbc.queryForList("select asset_name,domain_name,description,update_time from wiki_asset where asset_type='WIKI_PAGE' and coalesce(tags,'')<>'SYSTEM_INDEX' and status='0' order by asset_name limit 500");
-        StringBuilder md=new StringBuilder("# Wiki Index\n\n"); for(Map<String,Object> p:pages) md.append("- ").append(p.get("asset_name")).append(" | ").append(p.get("domain_name")).append(" | ").append(p.get("description")).append("\n");
-        List<Map<String,Object>> index=jdbc.queryForList("select asset_id from wiki_asset where asset_type='WIKI_PAGE' and tags='SYSTEM_INDEX' limit 1");
-        if(index.isEmpty()) jdbc.update("insert into wiki_asset(asset_name,asset_type,description,content,tags,status,create_by,create_time,update_by,update_time) values('index','WIKI_PAGE','LLM Wiki 页面索引',?,'SYSTEM_INDEX','0','system',now(),'system',now())",md.toString());
-        else jdbc.update("update wiki_asset set content=?,update_by='system',update_time=now() where asset_id=?",md.toString(),index.get(0).get("asset_id"));
+        indexService.refreshIndex();
     }
 
     private String openAiText(String prompt) {
-        Map<String,Object> body=new LinkedHashMap<>(); body.put("model",properties.getLlmWiki().getModel()); body.put("temperature",0.1);
-        Map<String,Object> message=new LinkedHashMap<>(); message.put("role","user"); message.put("content",prompt); body.put("messages",Collections.singletonList(message));
-        JsonNode root=parse(openAiExchange("/chat/completions",HttpMethod.POST,body)); JsonNode content=root==null?null:root.path("choices").path(0).path("message").path("content"); return content==null||content.isMissingNode()?"":content.asText();
+        return openAiText(prompt, "ALL");
     }
-    private String openAiExchange(String path,HttpMethod method,Object body) { OntologyIntegrationProperties.LlmWiki cfg=properties.getLlmWiki(); HttpHeaders headers=new HttpHeaders(); headers.setContentType(MediaType.APPLICATION_JSON); headers.setBearerAuth(cfg.getApiKey().trim()); ResponseEntity<String> response=rest.exchange(URI.create(join(cfg.getApiBaseUrl(),path)),method,new HttpEntity<>(body,headers),String.class); if(!response.getStatusCode().is2xxSuccessful()) throw new IllegalStateException("模型 API 返回 HTTP "+response.getStatusCodeValue()); return response.getBody()==null?"":response.getBody(); }
+
+    /**
+     * 供「执行分析」主链路使用的文本补全，固定走 ANALYSIS 场景模型。
+     *
+     * <p>分析主链路只需要一段自然语言说明和可选 JSON，不涉及 Wiki 页面检索，
+     * 因此不复用 {@code queryResult}，避免被问答范围推导成 FAST 场景而丢失高能力模型配置。
+     */
+    public String analysisCompletion(String prompt) {
+        requireEnabled();
+        return openAiText(prompt, "ANALYSIS");
+    }
+
+    private String openAiText(String prompt, String scene) {
+        Map<String,Object> cfg = configForScene(scene);
+        String baseUrl = String.valueOf(cfg.get("apiBaseUrl"));
+        String apiKey  = String.valueOf(cfg.getOrDefault("apiKey", ""));
+        String model   = String.valueOf(cfg.get("model"));
+        Map<String,Object> body=new LinkedHashMap<>(); body.put("model", model); body.put("temperature",0.1);
+        Map<String,Object> message=new LinkedHashMap<>(); message.put("role","user"); message.put("content",prompt); body.put("messages",Collections.singletonList(message));
+        JsonNode root=parse(openAiExchange("/chat/completions",HttpMethod.POST,body,baseUrl,apiKey)); JsonNode content=root==null?null:root.path("choices").path(0).path("message").path("content"); return content==null||content.isMissingNode()?"":content.asText();
+    }
+
+    /**
+     * 按使用场景（ALL/ANALYSIS/WIKI/FAST）从 ontology_llm_settings 中选择模型配置。
+     * 找不到对应场景时依次回退到 ALL，再找不到时回退内存配置（保持向后兼容）。
+     */
+    private Map<String,Object> configForScene(String scene) {
+        // 先按精确场景查，找不到再查 ALL
+        List<Map<String,Object>> rows = analysisMapper.selectEnabledSettingByScene(1, scene);
+        if (rows.isEmpty() && !"ALL".equals(scene)) {
+            rows = analysisMapper.selectEnabledSettingByScene(1, "ALL");
+        }
+        Map<String,Object> result = new LinkedHashMap<>();
+        if (!rows.isEmpty()) {
+            Map<String,Object> row = rows.get(0);
+            result.put("apiBaseUrl", row.get("api_base_url") == null ? "" : String.valueOf(row.get("api_base_url")));
+            result.put("model", row.get("model") == null ? "" : String.valueOf(row.get("model")));
+            String apiKey = "";
+            if (row.get("api_key_enc") != null && !String.valueOf(row.get("api_key_enc")).trim().isEmpty()) {
+                try { apiKey = credentials.decrypt(String.valueOf(row.get("api_key_enc"))); } catch (Exception ignored) { }
+            }
+            result.put("apiKey", apiKey);
+        } else {
+            // 回退内存配置（startup 时 loadStoredSettings 写入）
+            OntologyIntegrationProperties.LlmWiki cfg = properties.getLlmWiki();
+            result.put("apiBaseUrl", cfg.getApiBaseUrl() == null ? "" : cfg.getApiBaseUrl());
+            result.put("model", cfg.getModel() == null ? "" : cfg.getModel());
+            result.put("apiKey", cfg.getApiKey() == null ? "" : cfg.getApiKey());
+        }
+        return result;
+    }
+
+    private String openAiExchange(String path,HttpMethod method,Object body) {
+        OntologyIntegrationProperties.LlmWiki cfg=properties.getLlmWiki();
+        return openAiExchange(path, method, body, cfg.getApiBaseUrl(), cfg.getApiKey());
+    }
+
+    private String openAiExchange(String path,HttpMethod method,Object body,String baseUrl,String apiKey) {
+        HttpHeaders headers=new HttpHeaders(); headers.setContentType(MediaType.APPLICATION_JSON);
+        if (apiKey != null && !apiKey.trim().isEmpty()) headers.setBearerAuth(apiKey.trim());
+        ResponseEntity<String> response=rest.exchange(URI.create(join(baseUrl,path)),method,new HttpEntity<>(body,headers),String.class);
+        if(!response.getStatusCode().is2xxSuccessful()) throw new IllegalStateException("模型 API 返回 HTTP "+response.getStatusCodeValue());
+        return response.getBody()==null?"":response.getBody();
+    }
     private JsonNode parse(String raw) { try { if(raw==null||raw.trim().isEmpty())return null; String s=raw.trim().replaceFirst("(?s)^```(?:json)?\\s*","").replaceFirst("\\s*```$",""); int a=s.indexOf('{'),b=s.lastIndexOf('}'); if(a>=0&&b>a)s=s.substring(a,b+1); return json.readTree(s); } catch(Exception e) { return null; } }
     private void requireEnabled() { if(!enabled()) throw new IllegalStateException("内置 LLM Wiki 未配置模型 API"); }
     private String join(String base,String path) { String a=base==null?"":base.trim(),b=path==null?"":path.trim(); return a.endsWith("/")&&b.startsWith("/")?a.substring(0,a.length()-1)+b:!a.endsWith("/")&&!b.startsWith("/")?a+"/"+b:a+b; }

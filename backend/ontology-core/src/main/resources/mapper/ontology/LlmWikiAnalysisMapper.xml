@@ -1,0 +1,194 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ontologywiki.ontology.mapper.LlmWikiAnalysisMapper">
+
+    <!-- 记忆列表统一返回列 -->
+    <sql id="memoryColumns">
+        memory_id, task_id, proposal_id, memory_type, title, content, status, version,
+        created_by, create_time, reviewed_by, review_time
+    </sql>
+
+    <!-- 已确认知识条目统一返回列 -->
+    <sql id="knowledgeColumns">
+        title, content, keywords, version, task_id
+    </sql>
+
+    <!-- 分析任务、数据源与草案的组合列 -->
+    <sql id="analysisContextColumns">
+        t.task_name, t.scope, t.status, t.summary, t.wiki_space_id,
+        d.name AS datasource_name, d.db_type, d.database_name,
+        p.proposal_id, p.config_json
+    </sql>
+
+    <!-- ==================== 任务与草案 ==================== -->
+
+    <select id="selectTaskInfo" resultType="java.util.LinkedHashMap">
+        select task_name, wiki_space_id from analysis_task where task_id = #{taskId}
+    </select>
+
+    <select id="selectTaskSpace" resultType="java.util.LinkedHashMap">
+        select wiki_space_id from analysis_task where task_id = #{taskId}
+    </select>
+
+    <select id="selectLatestProposal" resultType="java.util.LinkedHashMap">
+        select proposal_id, config_json from ontology_proposal
+        where task_id = #{taskId}
+        order by proposal_id desc
+        limit 1
+    </select>
+
+    <select id="selectProposal" resultType="java.util.LinkedHashMap">
+        select proposal_id, config_json from ontology_proposal
+        where task_id = #{taskId} and proposal_id = #{proposalId}
+        limit 1
+    </select>
+
+    <select id="selectProposalConfig" resultType="java.util.LinkedHashMap">
+        select config_json from ontology_proposal
+        where task_id = #{taskId} and proposal_id = #{proposalId}
+        limit 1
+    </select>
+
+    <update id="updateProposalConfig">
+        update ontology_proposal
+        set config_json = #{configJson}, update_by = #{username}, update_time = now()
+        where proposal_id = #{proposalId}
+    </update>
+
+    <!-- 结构被修正后必须回到待审核，避免沿用旧审核结论 -->
+    <update id="updateProposalConfigAndResetReview">
+        update ontology_proposal
+        set config_json = #{configJson}, status = #{status}, review_by = null,
+            review_time = null, review_comment = null,
+            update_by = #{username}, update_time = now()
+        where task_id = #{taskId} and proposal_id = #{proposalId}
+    </update>
+
+    <select id="selectTaskAnalysisContext" resultType="java.util.LinkedHashMap">
+        select <include refid="analysisContextColumns"/>
+        from analysis_task t
+        left join ontology_datasource d on d.datasource_id = t.source_id
+        left join ontology_proposal p on p.proposal_id = (
+            select p2.proposal_id from ontology_proposal p2
+            where p2.task_id = t.task_id
+            order by p2.update_time desc, p2.proposal_id desc
+            limit 1
+        )
+        where t.task_id = #{taskId}
+    </select>
+
+    <select id="selectTaskAnalysisContextByProposal" resultType="java.util.LinkedHashMap">
+        select <include refid="analysisContextColumns"/>
+        from analysis_task t
+        left join ontology_datasource d on d.datasource_id = t.source_id
+        left join ontology_proposal p on p.proposal_id = #{proposalId} and p.task_id = t.task_id
+        where t.task_id = #{taskId}
+    </select>
+
+    <update id="updateTaskSummary">
+        update analysis_task
+        set summary = #{summary}, update_by = #{username}, update_time = now()
+        where task_id = #{taskId}
+    </update>
+
+    <!-- ==================== 分析记忆 ==================== -->
+
+    <select id="selectMaxVersion" resultType="java.lang.Integer">
+        select coalesce(max(version), 0) from ontology_analysis_memory where task_id = #{taskId}
+    </select>
+
+    <!-- 新增分析答案：确认时写入审核人，草稿时留空 -->
+    <insert id="insertAnswerMemory">
+        insert into ontology_analysis_memory
+            (space_id, task_id, proposal_id, memory_type, title, content, source_json, status, version,
+             created_by, create_time, update_by, update_time, reviewed_by, review_time)
+        values
+            (#{spaceId}, #{taskId}, #{proposalId}, 'ANALYSIS_ANSWER', #{title}, #{content}, #{sourceJson},
+             #{status}, #{version}, #{username}, now(), #{username}, now(),
+             <choose>
+                <when test="confirmed">#{username}, now()</when>
+                <otherwise>null, null</otherwise>
+            </choose>)
+    </insert>
+
+    <!-- 新增结构化知识条目：固定为已确认状态 -->
+    <insert id="insertKnowledgeItem">
+        insert into ontology_analysis_memory
+            (space_id, task_id, proposal_id, memory_type, title, content, keywords, source_json, status, version,
+             created_by, create_time, update_by, update_time, reviewed_by, review_time)
+        values
+            (#{spaceId}, #{taskId}, #{proposalId}, 'KNOWLEDGE_ITEM', #{title}, #{content}, #{keywords},
+             '{"kind":"KNOWLEDGE_ITEM"}', 'CONFIRMED', #{version},
+             #{username}, now(), #{username}, now(), #{username}, now())
+    </insert>
+
+    <select id="selectMemoriesByTask" resultType="java.util.LinkedHashMap">
+        select <include refid="memoryColumns"/>
+        from ontology_analysis_memory
+        where task_id = #{taskId}
+        order by memory_id desc
+    </select>
+
+    <select id="selectLatestMemory" resultType="java.util.LinkedHashMap">
+        select <include refid="memoryColumns"/>
+        from ontology_analysis_memory
+        where task_id = #{taskId}
+        order by memory_id desc
+        limit 1
+    </select>
+
+    <!-- 已确认知识：任务与空间取并集 -->
+    <select id="selectConfirmedItemsByTaskAndSpace" resultType="java.util.LinkedHashMap">
+        select <include refid="knowledgeColumns"/>
+        from ontology_analysis_memory
+        where status = #{status} and memory_type = #{memoryType}
+          and (task_id = #{taskId} or space_id = #{spaceId})
+        order by update_time desc, memory_id desc
+        limit #{limit}
+    </select>
+
+    <select id="selectConfirmedItemsByTask" resultType="java.util.LinkedHashMap">
+        select <include refid="knowledgeColumns"/>
+        from ontology_analysis_memory
+        where status = #{status} and memory_type = #{memoryType} and task_id = #{taskId}
+        order by update_time desc, memory_id desc
+        limit #{limit}
+    </select>
+
+    <select id="selectConfirmedItemsBySpace" resultType="java.util.LinkedHashMap">
+        select <include refid="knowledgeColumns"/>
+        from ontology_analysis_memory
+        where status = #{status} and memory_type = #{memoryType} and space_id = #{spaceId}
+        order by update_time desc, memory_id desc
+        limit #{limit}
+    </select>
+
+    <!-- ==================== 模型配置 ==================== -->
+
+    <select id="selectEnabledSettings" resultType="java.util.LinkedHashMap">
+        select api_base_url, api_key_enc, model, provider_type
+        from ontology_llm_settings
+        where enabled = #{enabled}
+    </select>
+
+    <select id="selectEnabledSettingByScene" resultType="java.util.LinkedHashMap">
+        select api_base_url, api_key_enc, model
+        from ontology_llm_settings
+        where enabled = #{enabled} and usage_scene = #{scene}
+        order by id desc
+        limit 1
+    </select>
+
+    <!-- ==================== 问答日志 ==================== -->
+
+    <!-- 最近问答日志，按主键倒序 -->
+    <select id="selectRecentChatMessages" resultType="java.util.LinkedHashMap">
+        select role, content, create_time
+        from wiki_chat_message
+        order by message_id desc
+        limit #{limit}
+    </select>
+
+</mapper>

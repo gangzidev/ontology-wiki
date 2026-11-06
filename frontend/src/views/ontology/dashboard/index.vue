@@ -6,7 +6,7 @@
         <h1>你好，开始构建你的本体资产。</h1>
         <p>从行业知识和数据库结构出发，协作沉淀对象、逻辑与动作配置。</p>
       </div>
-      <div class="hero-actions"><el-button v-hasPermi="['ontology:wiki:settings']" icon="el-icon-setting" @click="openSettings">大模型设置</el-button><div class="hero-mark"><i class="el-icon-connection"></i><span>Evidence<br>first</span></div></div>
+      <div class="hero-actions"><el-button v-hasPermi="['ontology:llm:list']" icon="el-icon-setting" @click="goModelSettings">模型配置</el-button><div class="hero-mark"><i class="el-icon-connection"></i><span>Evidence<br>first</span></div></div>
     </section>
     <el-row :gutter="16" class="cards">
       <el-col v-for="item in cards" :key="item.key" :xs="12" :sm="8" :md="4">
@@ -20,24 +20,13 @@
       </el-steps>
       <div v-if="!hasWorkflowData" class="empty-flow"><i class="el-icon-info"></i> 当前还没有流程记录，所有步骤保持待开始。</div>
     </el-card>
-    <el-dialog title="大模型设置" :visible.sync="settingsOpen" width="560px" append-to-body>
-      <el-alert title="配置保存在本系统数据库，API Key 只写入加密密文；留空表示沿用已保存密钥。" type="info" :closable="false" style="margin-bottom:18px" />
-      <el-form label-width="110px">
-        <el-form-item label="启用模型"><el-switch v-model="settings.enabled" /></el-form-item>
-        <el-form-item label="API 地址"><el-input v-model="settings.apiBaseUrl" placeholder="https://api.example.com/v1" /></el-form-item>
-        <el-form-item label="模型名称"><el-input v-model="settings.model" placeholder="例如 gpt-4o-mini" /></el-form-item>
-        <el-form-item label="API Key"><el-input v-model="settings.apiKey" type="password" show-password :placeholder="settings.apiKeyConfigured ? '已配置，留空保持不变' : '请输入 API Key'" /></el-form-item>
-        <el-form-item v-if="settings.apiKeyConfigured"><el-checkbox v-model="settings.clearApiKey">清除已保存 API Key</el-checkbox></el-form-item>
-      </el-form>
-      <span slot="footer"><el-button :loading="settingsTesting" :disabled="settingsSaving" @click="testSettings">保存并测试</el-button><el-button type="primary" :loading="settingsSaving" :disabled="settingsTesting" @click="saveSettings">保存设置</el-button><el-button @click="settingsOpen=false">取消</el-button></span>
-    </el-dialog>
   </div>
 </template>
 <script>
-import { getDashboard, getLlmSettings, saveLlmSettings, testLlmSettings } from '@/api/ontology'
+import { getDashboard } from '@/api/ontology'
 export default {
   name: 'OntologyDashboard',
-  data: () => ({ counts: {}, settingsOpen: false, settingsSaving: false, settingsTesting: false, settings: { enabled: false, apiBaseUrl: '', model: '', apiKey: '', apiKeyConfigured: false, clearApiKey: false }, cards: [
+  data: () => ({ counts: {}, cards: [
     { key: 'spaces', label: '行业知识空间', icon: 'el-icon-folder-opened', tone: 'blue' },
     { key: 'assets', label: 'Wiki资产', icon: 'el-icon-notebook-2', tone: 'green' },
     { key: 'datasources', label: '数据源', icon: 'el-icon-coin', tone: 'orange' },
@@ -67,9 +56,8 @@ export default {
   },
   created() { getDashboard().then(res => { this.counts = res.data || {} }) },
   methods: {
-    openSettings() { this.settingsOpen = true; this.settings.apiKey = ''; this.settings.clearApiKey = false; getLlmSettings().then(({ data }) => { this.settings = Object.assign(this.settings, data || {}, { apiKey: '', clearApiKey: false }) }).catch(() => {}) },
-    saveSettings() { this.settingsSaving = true; return saveLlmSettings(this.settings).then(({ data }) => { this.settings = Object.assign(this.settings, data || {}, { apiKey: '', clearApiKey: false }); this.$modal.msgSuccess('大模型设置已保存'); return true }).catch(() => false).finally(() => { this.settingsSaving = false }) },
-    testSettings() { this.settingsTesting = true; this.settingsSaving = true; saveLlmSettings(this.settings).then(({ data }) => { this.settings = Object.assign(this.settings, data || {}, { apiKey: '', clearApiKey: false }); this.$modal.msgSuccess('大模型设置已保存'); return testLlmSettings() }).then(({ data }) => this.$modal.msgSuccess((data && data.message) || '模型 API 调用成功')).catch(() => {}).finally(() => { this.settingsTesting = false; this.settingsSaving = false }) }
+    /** 模型配置统一收敛到「模型配置」页面，工作台不再维护第二套设置入口 */
+    goModelSettings() { this.$router.push({ path: '/ontology/settings' }) }
   }
 }
 </script>

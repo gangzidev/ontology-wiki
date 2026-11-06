@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ontologywiki.ontology.mapper.McpMapper">
+
+    <!-- ==================== 令牌校验 ==================== -->
+
+    <!-- 按哈希查启用令牌，只取主键 -->
+    <select id="selectEnabledToken" resultType="java.util.LinkedHashMap">
+        select token_id from ontology_mcp_token
+        where token_hash = #{tokenHash} and status = #{status}
+        limit 1
+    </select>
+
+    <!-- 刷新最近使用时间，便于管理页观察令牌活跃度 -->
+    <update id="touchToken">
+        update ontology_mcp_token set last_used = now() where token_id = #{tokenId}
+    </update>
+
+    <!-- ==================== 工具查询 ==================== -->
+
+    <!-- 空间内检索：名称、说明、正文三列模糊匹配 -->
+    <select id="searchAssetsInSpace" resultType="java.util.LinkedHashMap">
+        select asset_id, asset_name, asset_type, domain_name, description
+        from wiki_asset
+        where status = #{status} and space_id = #{spaceId}
+          and (asset_name like #{like} or description like #{like} or content like #{like})
+        order by update_time desc
+        limit #{limit}
+    </select>
+
+    <!-- 全库检索：不限定知识空间 -->
+    <select id="searchAssets" resultType="java.util.LinkedHashMap">
+        select asset_id, asset_name, asset_type, domain_name, description
+        from wiki_asset
+        where status = #{status}
+          and (asset_name like #{like} or description like #{like} or content like #{like})
+        order by update_time desc
+        limit #{limit}
+    </select>
+
+    <!-- 行业知识空间列表 -->
+    <select id="listSpaces" resultType="java.util.LinkedHashMap">
+        select space_id, space_name, description, create_by, create_time
+        from wiki_space
+        where status = #{status}
+        order by create_time desc
+    </select>
+
+    <!-- 按状态筛选分析任务 -->
+    <select id="listTasksByStatus" resultType="java.util.LinkedHashMap">
+        select task_id, task_name, status, summary, create_by, create_time, update_time
+        from analysis_task
+        where status = #{status}
+        order by update_time desc
+        limit #{limit}
+    </select>
+
+    <!-- 全部分析任务 -->
+    <select id="listTasks" resultType="java.util.LinkedHashMap">
+        select task_id, task_name, status, summary, create_by, create_time, update_time
+        from analysis_task
+        order by update_time desc
+        limit #{limit}
+    </select>
+
+    <!-- 单任务状态 -->
+    <select id="selectTaskStatus" resultType="java.util.LinkedHashMap">
+        select task_id, task_name, status, summary, update_time
+        from analysis_task
+        where task_id = #{taskId}
+    </select>
+
+    <!-- 触发分析前的状态校验 -->
+    <select id="selectTaskIdAndStatus" resultType="java.util.LinkedHashMap">
+        select task_id, status from analysis_task where task_id = #{taskId}
+    </select>
+
+    <!-- 最新草案配置 -->
+    <select id="selectLatestProposalConfig" resultType="java.util.LinkedHashMap">
+        select config_json from ontology_proposal
+        where task_id = #{taskId}
+        order by proposal_id desc
+        limit 1
+    </select>
+
+    <!-- ==================== 令牌管理 ==================== -->
+
+    <select id="listTokens" resultType="java.util.LinkedHashMap">
+        select token_id, token_name, created_by, create_time, last_used, status
+        from ontology_mcp_token
+        where created_by = #{username}
+        order by token_id desc
+    </select>
+
+    <insert id="insertToken">
+        insert into ontology_mcp_token (token_name, token_hash, created_by, create_time, status)
+        values (#{tokenName}, #{tokenHash}, #{username}, now(), 1)
+    </insert>
+
+    <delete id="deleteToken">
+        delete from ontology_mcp_token where token_id = #{tokenId} and created_by = #{username}
+    </delete>
+
+</mapper>

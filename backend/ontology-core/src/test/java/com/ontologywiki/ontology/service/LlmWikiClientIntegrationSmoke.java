@@ -1,16 +1,48 @@
 package com.ontologywiki.ontology.service;
 
 import com.ontologywiki.ontology.config.OntologyIntegrationProperties;
+import com.ontologywiki.ontology.mapper.LlmSettingsMapper;
+import com.ontologywiki.ontology.mapper.LlmWikiAnalysisMapper;
+import com.ontologywiki.ontology.mapper.WikiAssetMapper;
+import com.ontologywiki.ontology.service.wiki.WikiIndexService;
+import org.apache.ibatis.builder.xml.XMLMapperBuilder;
+import org.apache.ibatis.io.Resources;
+import org.apache.ibatis.mapping.Environment;
+import org.apache.ibatis.session.Configuration;
+import org.apache.ibatis.session.SqlSession;
+import org.apache.ibatis.session.SqlSessionFactory;
+import org.apache.ibatis.session.SqlSessionFactoryBuilder;
+import org.apache.ibatis.transaction.jdbc.JdbcTransactionFactory;
 import org.junit.Assert;
 import org.junit.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.web.client.RestTemplate;
+
+import javax.sql.DataSource;
+import java.io.InputStream;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * LLM Wiki 真实链路冒烟测试。
+ *
+ * <p>需要真实 MySQL 与可用模型，通过环境变量开启：
+ * {@code LLM_API_KEY}、{@code ONTOLOGY_DB_URL}、{@code ONTOLOGY_DB_USERNAME}、{@code ONTOLOGY_DB_PASSWORD}。
+ *
+ * <p>重构后业务 SQL 已迁到 MyBatis Mapper，因此这里按需构建一个独立的 SqlSessionFactory，
+ * 复用生产环境的 Mapper XML，避免测试与实现出现两套 SQL。
+ */
 public class LlmWikiClientIntegrationSmoke {
+
+    /** 被测客户端用到的 Mapper XML */
+    private static final String[] MAPPER_RESOURCES = {
+            "mapper/ontology/LlmWikiAnalysisMapper.xml",
+            "mapper/ontology/WikiAssetMapper.xml",
+            "mapper/ontology/LlmSettingsMapper.xml"
+    };
+
     @Test
     public void realMysqlAndModelCompleteWikiChain() {
         String key = System.getenv("LLM_API_KEY");
@@ -20,8 +52,21 @@ public class LlmWikiClientIntegrationSmoke {
         OntologyIntegrationProperties props = new OntologyIntegrationProperties();
         OntologyIntegrationProperties.LlmWiki cfg = props.getLlmWiki();
         cfg.setEnabled(true); cfg.setApiBaseUrl("https://fast.sbbbbbbbbb.xyz/v1"); cfg.setApiKey(key); cfg.setModel("gpt-6-sol");
-        LlmWikiClient client = new LlmWikiClient(props, new RestTemplate(), jdbc, new CredentialService("smoke-test-credential-key"));
-        client.ensureChatSessionTable();
+
+        try (SqlSession session = openSession(ds)) {
+            LlmWikiClient client = new LlmWikiClient(props, new RestTemplate(), new CredentialService("smoke-test-credential-key"),
+                    session.getMapper(LlmWikiAnalysisMapper.class),
+                    session.getMapper(WikiAssetMapper.class),
+                    session.getMapper(LlmSettingsMapper.class),
+                    new WikiIndexService(session.getMapper(WikiAssetMapper.class)));
+            client.loadSettingsOnStartup();
+            runChain(client, jdbc, session);
+        }
+    }
+
+    /** 走一遍「整理 → 空间问答 → 资产问答 → 问候」的完整链路，并校验引用范围。 */
+    @SuppressWarnings("unchecked")
+    private void runChain(LlmWikiClient client, JdbcTemplate jdbc, SqlSession session) {
         String suffix = String.valueOf(System.currentTimeMillis());
         jdbc.update("insert into wiki_space(space_name,description,status,create_by,create_time,update_by,update_time) values(?,?,'0','smoke',now(),'smoke',now())", "链路测试空间-" + suffix, "自动化临时空间");
         Long spaceId = jdbc.queryForObject("select max(space_id) from wiki_space where space_name=? and create_by='smoke'", Long.class, "链路测试空间-" + suffix);
@@ -61,6 +106,22 @@ public class LlmWikiClientIntegrationSmoke {
             jdbc.update("delete from wiki_asset where tags=?", "SOURCE:" + id);
             jdbc.update("delete from wiki_space where space_id=?", spaceId);
             client.refreshIndex();
+            session.commit();
         }
+    }
+
+    /** 按生产环境的 Mapper XML 构建独立会话，测试自行管理提交。 */
+    private SqlSession openSession(DataSource dataSource) {
+        Configuration configuration = new Configuration(
+                new Environment("smoke", new JdbcTransactionFactory(), dataSource));
+        for (String resource : MAPPER_RESOURCES) {
+            try (InputStream in = Resources.getResourceAsStream(resource)) {
+                new XMLMapperBuilder(in, configuration, resource, configuration.getSqlFragments()).parse();
+            } catch (Exception e) {
+                throw new IllegalStateException("加载 Mapper XML 失败: " + resource, e);
+            }
+        }
+        SqlSessionFactory factory = new SqlSessionFactoryBuilder().build(configuration);
+        return factory.openSession();
     }
 }

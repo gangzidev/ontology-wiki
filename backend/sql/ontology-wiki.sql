@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS ontology_proposal (
 CREATE TABLE IF NOT EXISTS ontology_analysis_memory (
   memory_id bigint NOT NULL AUTO_INCREMENT, space_id bigint, task_id bigint NOT NULL, proposal_id bigint,
   memory_type varchar(40) NOT NULL DEFAULT 'ANALYSIS_ANSWER', title varchar(255) NOT NULL, content longtext NOT NULL,
+  keywords varchar(500) NULL COMMENT '知识条目检索关键词',
   source_json longtext, status varchar(30) NOT NULL DEFAULT 'DRAFT', version int NOT NULL DEFAULT 1,
   created_by varchar(64), create_time datetime, update_by varchar(64), update_time datetime,
   reviewed_by varchar(64), review_time datetime, PRIMARY KEY(memory_id),
@@ -49,8 +50,16 @@ CREATE TABLE IF NOT EXISTS ontology_import_record (
   create_by varchar(64), create_time datetime, update_by varchar(64), update_time datetime, PRIMARY KEY(import_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 CREATE TABLE IF NOT EXISTS ontology_llm_settings (
-  setting_id tinyint NOT NULL, enabled tinyint(1) NOT NULL DEFAULT 0, api_base_url varchar(1000), api_key_enc text, model varchar(200),
-  update_by varchar(64), update_time datetime, PRIMARY KEY(setting_id)
+  id bigint NOT NULL AUTO_INCREMENT, setting_id tinyint NULL, setting_name varchar(100) NOT NULL DEFAULT '默认模型',
+  provider_type varchar(30) NOT NULL DEFAULT 'OPENAI_COMPAT', usage_scene varchar(30) NOT NULL DEFAULT 'ALL',
+  enabled tinyint(1) NOT NULL DEFAULT 0, api_base_url varchar(1000), api_key_enc text, model varchar(200),
+  update_by varchar(64), update_time datetime, PRIMARY KEY(id), UNIQUE KEY uk_llm_setting_id(setting_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS ontology_mcp_token (
+  token_id bigint NOT NULL AUTO_INCREMENT, token_name varchar(100) NOT NULL,
+  token_hash varchar(64) NOT NULL COMMENT 'SHA-256(token)',
+  created_by varchar(64), create_time datetime, last_used datetime, status tinyint NOT NULL DEFAULT 1,
+  PRIMARY KEY(token_id), UNIQUE KEY uk_token_hash(token_hash)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 业务菜单（超级管理员角色默认拥有；其他角色在系统管理中授权）
@@ -95,5 +104,12 @@ INSERT IGNORE INTO sys_menu(menu_id, menu_name, parent_id, order_num, path, comp
 (2072,'数据源查询',2003,4,'','','1',0,'F','1','0','ontology:datasources:query','', 'admin',NOW()),
 (2073,'分析任务查询',2004,4,'','','1',0,'F','1','0','ontology:analyses:query','', 'admin',NOW()),
 (2074,'草案查询',2005,4,'','','1',0,'F','1','0','ontology:proposals:query','', 'admin',NOW()),
-(2075,'导入记录查询',2006,4,'','','1',0,'F','1','0','ontology:imports:query','', 'admin',NOW());
-INSERT IGNORE INTO sys_role_menu(role_id, menu_id) SELECT 1, menu_id FROM sys_menu WHERE menu_id >= 2010 AND menu_id <= 2075;
+(2075,'导入记录查询',2006,4,'','','1',0,'F','1','0','ontology:imports:query','', 'admin',NOW()),
+(2080,'大模型设置',2008,1,'','','1',0,'F','1','0','ontology:wiki:settings','', 'admin',NOW());
+INSERT IGNORE INTO sys_role_menu(role_id, menu_id) SELECT 1, menu_id FROM sys_menu WHERE menu_id >= 2010 AND menu_id <= 2080;
+
+-- 模型配置与 MCP Token：拆成两个独立菜单
+INSERT IGNORE INTO sys_menu(menu_id, menu_name, parent_id, order_num, path, component, is_frame, is_cache, menu_type, visible, status, perms, icon, create_by, create_time) VALUES
+(2090,'模型配置',2000,9,'settings','ontology/settings/index','1',0,'C','0','0','ontology:llm:list','robot','admin',NOW()),
+(2091,'MCP Token',2000,10,'mcp','ontology/settings/mcp','1',0,'C','0','0','ontology:llm:list','key','admin',NOW());
+INSERT IGNORE INTO sys_role_menu(role_id, menu_id) VALUES (1,2090),(1,2091);

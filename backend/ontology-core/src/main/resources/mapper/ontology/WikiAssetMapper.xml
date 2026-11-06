@@ -1,0 +1,279 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ontologywiki.ontology.mapper.WikiAssetMapper">
+
+    <!-- Wiki 页面统一返回列，保持与原有前端字段名一致（id / slug / title） -->
+    <sql id="pageColumns">
+        asset_id AS id, asset_name AS slug, asset_name AS title,
+        domain_name, description, content, update_time
+    </sql>
+
+    <!-- ==================== 页面查询 ==================== -->
+
+    <!-- 全部 Wiki 页面，排除系统索引页 -->
+    <select id="selectPages" resultType="java.util.LinkedHashMap">
+        SELECT <include refid="pageColumns"/>
+        FROM wiki_asset
+        WHERE asset_type = #{assetType} AND status = #{status}
+          AND COALESCE(tags, '') &lt;&gt; 'SYSTEM_INDEX'
+        ORDER BY update_time DESC, asset_id DESC
+    </select>
+
+    <!-- 按页面标识查单页 -->
+    <select id="selectPageBySlug" resultType="java.util.LinkedHashMap">
+        SELECT <include refid="pageColumns"/>
+        FROM wiki_asset
+        WHERE asset_type = #{assetType} AND asset_name = #{slug} AND status = #{status}
+        LIMIT 1
+    </select>
+
+    <!-- 按业务域筛选页面 -->
+    <select id="selectPagesByCategory" resultType="java.util.LinkedHashMap">
+        SELECT asset_id AS id, asset_name AS slug, domain_name, description, update_time
+        FROM wiki_asset
+        WHERE asset_type = #{assetType} AND status = #{status} AND domain_name = #{domainName}
+        ORDER BY update_time DESC
+    </select>
+
+    <!-- 创建前查重 -->
+    <select id="selectExistingPage" resultType="java.util.LinkedHashMap">
+        SELECT asset_id FROM wiki_asset
+        WHERE asset_type = #{assetType} AND asset_name = #{slug} AND status = #{status}
+    </select>
+
+    <!-- ==================== 页面写入 ==================== -->
+
+    <insert id="insertPage">
+        INSERT INTO wiki_asset (space_id, asset_name, asset_type, description, content, status,
+                                create_by, create_time, update_by, update_time)
+        VALUES (#{spaceId}, #{slug}, #{assetType}, #{description}, #{content}, #{status},
+                'system', NOW(), 'system', NOW())
+    </insert>
+
+    <update id="updatePageContent">
+        UPDATE wiki_asset
+        SET content = #{content}, update_by = 'system', update_time = NOW()
+        WHERE asset_type = #{assetType} AND asset_name = #{slug} AND status = #{status}
+    </update>
+
+    <!-- 逻辑删除：只改状态，保留数据便于追溯 -->
+    <update id="softDeletePage">
+        UPDATE wiki_asset
+        SET status = #{inactiveStatus}, update_by = 'system', update_time = NOW()
+        WHERE asset_type = #{assetType} AND asset_name = #{slug}
+    </update>
+
+    <!-- ==================== 索引维护 ==================== -->
+
+    <select id="selectSystemIndex" resultType="java.util.LinkedHashMap">
+        SELECT content FROM wiki_asset
+        WHERE asset_type = #{assetType} AND tags = #{tag} AND status = #{status}
+        LIMIT 1
+    </select>
+
+    <select id="selectIndexablePages" resultType="java.util.LinkedHashMap">
+        SELECT asset_name, domain_name, description, update_time
+        FROM wiki_asset
+        WHERE asset_type = #{assetType} AND status = #{status} AND COALESCE(tags, '') &lt;&gt; #{tag}
+        ORDER BY asset_name
+        LIMIT #{limit}
+    </select>
+
+    <select id="selectIndexPageId" resultType="java.util.LinkedHashMap">
+        SELECT asset_id FROM wiki_asset
+        WHERE asset_type = #{assetType} AND tags = #{tag}
+        LIMIT 1
+    </select>
+
+    <insert id="insertSystemIndex">
+        INSERT INTO wiki_asset (asset_name, asset_type, description, content, tags, status,
+                                create_by, create_time, update_by, update_time)
+        VALUES ('index', #{assetType}, 'LLM Wiki 页面索引', #{content}, #{tag}, #{status},
+                'system', NOW(), 'system', NOW())
+    </insert>
+
+    <update id="updateSystemIndexContent">
+        UPDATE wiki_asset
+        SET content = #{content}, update_by = 'system', update_time = NOW()
+        WHERE asset_id = #{assetId}
+    </update>
+
+    <select id="countIndexablePages" resultType="java.lang.Integer">
+        SELECT COUNT(*) FROM wiki_asset
+        WHERE asset_type = #{assetType} AND status = #{status} AND COALESCE(tags, '') &lt;&gt; #{tag}
+    </select>
+
+    <select id="countSourceAssets" resultType="java.lang.Integer">
+        SELECT COUNT(*) FROM wiki_asset
+        WHERE asset_type &lt;&gt; #{assetType} AND status = #{status}
+    </select>
+
+    <!-- ==================== 资料整理 ==================== -->
+
+    <select id="selectSourceAsset" resultType="java.util.LinkedHashMap">
+        SELECT asset_id, space_id, asset_name, asset_type, domain_name, description, content
+        FROM wiki_asset
+        WHERE asset_id = #{assetId} AND status = #{status}
+    </select>
+
+    <select id="selectPageBySourceTag" resultType="java.util.LinkedHashMap">
+        SELECT asset_id FROM wiki_asset WHERE asset_type = #{assetType} AND tags = #{tag} LIMIT 1
+    </select>
+
+    <insert id="insertIngestedPage">
+        INSERT INTO wiki_asset (space_id, asset_name, asset_type, domain_name, description, content, tags, status,
+                                create_by, create_time, update_by, update_time)
+        VALUES (#{spaceId}, #{title}, #{assetType}, #{domainName}, #{description}, #{content}, #{tag}, #{status},
+                'system', NOW(), 'system', NOW())
+    </insert>
+
+    <update id="updateIngestedPage">
+        UPDATE wiki_asset
+        SET space_id = #{spaceId}, asset_name = #{title}, domain_name = #{domainName},
+            description = #{description}, content = #{content},
+            update_by = 'system', update_time = NOW()
+        WHERE asset_id = #{assetId}
+    </update>
+
+    <!-- ==================== 分析知识页面 ==================== -->
+
+    <select id="selectPageByTag" resultType="java.util.LinkedHashMap">
+        SELECT asset_id FROM wiki_asset WHERE tags = #{tag} LIMIT 1
+    </select>
+
+    <insert id="insertKnowledgePage">
+        INSERT INTO wiki_asset (space_id, asset_name, asset_type, description, content, tags, status,
+                                create_by, create_time, update_by, update_time)
+        VALUES (#{spaceId}, #{title}, 'WIKI_PAGE', #{description}, #{content}, #{tag}, '0',
+                #{username}, NOW(), #{username}, NOW())
+    </insert>
+
+    <update id="updateKnowledgePage">
+        UPDATE wiki_asset
+        SET space_id = #{spaceId}, asset_name = #{title}, description = #{description}, content = #{content},
+            update_by = #{username}, update_time = NOW()
+        WHERE asset_id = #{assetId}
+    </update>
+
+    <!-- ==================== 问答检索与 URL 来源 ==================== -->
+
+    <!-- 单资产正文，用于生成证据片段 -->
+    <select id="selectAssetContent" resultType="java.util.LinkedHashMap">
+        SELECT content FROM wiki_asset WHERE asset_id = #{assetId}
+    </select>
+
+    <!--
+      问答检索：原始资料。
+      范围三种情况：单资产（asset_id 或 SOURCE 标签匹配）、限定知识空间、全库。
+      单资产范围下只排除 Wiki 页面，其余范围同时排除 Wiki 页面与 URL 来源。
+    -->
+    <select id="selectQuerySources" resultType="java.util.LinkedHashMap">
+        SELECT asset_id, asset_name, asset_type, domain_name, description
+        FROM wiki_asset
+        WHERE status = #{status}
+        <choose>
+            <when test="assetScope">
+                AND asset_type &lt;&gt; #{pageType}
+            </when>
+            <otherwise>
+                AND asset_type NOT IN (#{pageType}, 'URL')
+            </otherwise>
+        </choose>
+          AND content IS NOT NULL AND CHAR_LENGTH(TRIM(content)) &gt; 0
+        <choose>
+            <when test="assetScope">
+                AND (asset_id = #{scopeId} OR tags = #{sourceTag})
+            </when>
+            <when test="spaceId != null">
+                AND space_id = #{spaceId}
+            </when>
+        </choose>
+        ORDER BY update_time DESC, asset_id DESC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 问答检索：Wiki 页面，始终排除系统索引页 -->
+    <select id="selectQueryPages" resultType="java.util.LinkedHashMap">
+        SELECT asset_id, asset_name, asset_type, domain_name, description
+        FROM wiki_asset
+        WHERE status = #{status}
+          AND asset_type = #{assetType}
+          AND COALESCE(tags, '') &lt;&gt; #{indexTag}
+          AND content IS NOT NULL AND CHAR_LENGTH(TRIM(content)) &gt; 0
+        <choose>
+            <when test="assetScope">
+                AND (asset_id = #{scopeId} OR tags = #{sourceTag})
+            </when>
+            <when test="spaceId != null">
+                AND space_id = #{spaceId}
+            </when>
+        </choose>
+        ORDER BY update_time DESC, asset_id DESC
+        LIMIT #{limit}
+    </select>
+
+    <!-- URL 来源先落库，等待后续整理为 Wiki 页面 -->
+    <insert id="insertUrlSource">
+        INSERT INTO wiki_asset
+            (asset_name, asset_type, description, content, status,
+             create_by, create_time, update_by, update_time)
+        VALUES
+            (#{url}, 'URL', 'URL 待整理来源', #{url}, '0',
+             'system', NOW(), 'system', NOW())
+    </insert>
+
+    <!-- ==================== 资产图谱 ==================== -->
+
+    <!-- 图谱节点：正文只截取前若干字符，够解析页面引用即可 -->
+    <select id="selectGraphNodes" resultType="java.util.LinkedHashMap">
+        SELECT asset_id, space_id, asset_name, asset_type, tags,
+               CASE WHEN asset_type = 'WIKI_PAGE' THEN SUBSTRING(content, 1, #{contentLen}) ELSE NULL END content
+        FROM wiki_asset
+        WHERE status = #{status} AND COALESCE(tags, '') &lt;&gt; #{indexTag}
+        <if test="spaceId != null">
+            AND space_id = #{spaceId}
+        </if>
+        ORDER BY asset_name
+        LIMIT #{limit}
+    </select>
+
+    <!-- 分析沉淀页面与记忆的关联，用于补「分析依据」边 -->
+    <select id="selectAnalysisMemoryLinks" resultType="java.util.LinkedHashMap">
+        SELECT a.asset_id, m.source_json
+        FROM wiki_asset a
+        JOIN ontology_analysis_memory m
+          ON a.tags = CONCAT('ANALYSIS_MEMORY:', m.memory_id)
+        WHERE a.status = #{status} AND a.asset_type = #{assetType}
+        <if test="spaceId != null">
+            AND a.space_id = #{spaceId}
+        </if>
+    </select>
+
+    <!-- ==================== 分析上下文资料 ==================== -->
+
+    <select id="selectAnalyzeDocuments" resultType="java.util.LinkedHashMap">
+        SELECT asset_id sourceId, asset_name title, domain_name domain, content
+        FROM wiki_asset
+        WHERE status = #{status} AND space_id = #{spaceId}
+          AND UPPER(asset_type) &lt;&gt; 'URL'
+          AND content IS NOT NULL AND CHAR_LENGTH(TRIM(content)) &gt; 0
+        ORDER BY update_time DESC, asset_id DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="selectAnalyzeRules" resultType="java.util.LinkedHashMap">
+        SELECT asset_id sourceId, asset_name title, content
+        FROM wiki_asset
+        WHERE status = #{status} AND space_id = #{spaceId}
+          AND content IS NOT NULL AND CHAR_LENGTH(TRIM(content)) &gt; 0
+          AND UPPER(asset_type) IN
+        <foreach collection="types" item="type" open="(" separator="," close=")">
+            #{type}
+        </foreach>
+        ORDER BY update_time DESC, asset_id DESC
+        LIMIT #{limit}
+    </select>
+
+</mapper>

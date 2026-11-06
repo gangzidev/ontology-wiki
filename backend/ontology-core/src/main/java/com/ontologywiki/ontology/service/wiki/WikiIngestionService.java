@@ -3,10 +3,10 @@ package com.ontologywiki.ontology.service.wiki;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.ontologywiki.ontology.domain.WikiAssetStatus;
 import com.ontologywiki.ontology.domain.WikiAssetType;
+import com.ontologywiki.ontology.mapper.WikiAssetMapper;
 import com.ontologywiki.ontology.service.llm.LlmClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,6 +24,8 @@ import java.util.Map;
  *   <li>管理整理后的页面与原始资料的关联</li>
  * </ul>
  *
+ * <p>SQL 已下沉至 {@link WikiAssetMapper} 及对应 XML，本类只保留模型调用与内容编排。
+ *
  * @author ontology-wiki
  */
 @Service
@@ -34,14 +36,14 @@ public class WikiIngestionService {
     private static final int MAX_CONTENT_LENGTH = 30000;
     private static final int MAX_RESULT_LENGTH = 1000000;
 
-    private final JdbcTemplate jdbcTemplate;
+    private final WikiAssetMapper assetMapper;
     private final LlmClient llmClient;
     private final WikiIndexService indexService;
 
-    public WikiIngestionService(JdbcTemplate jdbcTemplate,
+    public WikiIngestionService(WikiAssetMapper assetMapper,
                                 LlmClient llmClient,
                                 WikiIndexService indexService) {
-        this.jdbcTemplate = jdbcTemplate;
+        this.assetMapper = assetMapper;
         this.llmClient = llmClient;
         this.indexService = indexService;
     }
@@ -68,13 +70,7 @@ public class WikiIngestionService {
     @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> ingestAsset(Long assetId, WikiTemplateType templateType) {
         // 查询原始资产
-        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                "SELECT asset_id, space_id, asset_name, asset_type, domain_name, description, content " +
-                        "FROM wiki_asset " +
-                        "WHERE asset_id = ? AND status = ?",
-                assetId,
-                WikiAssetStatus.ACTIVE.getCode()
-        );
+        List<Map<String, Object>> rows = assetMapper.selectSourceAsset(assetId, WikiAssetStatus.ACTIVE.getCode());
 
         if (rows.isEmpty()) {
             throw new IllegalArgumentException("Wiki 资产不存在或已停用: " + assetId);
@@ -103,42 +99,17 @@ public class WikiIngestionService {
         String sourceTag = "SOURCE:" + assetId;
         Long spaceId = source.get("space_id") == null ? null : ((Number) source.get("space_id")).longValue();
 
-        List<Map<String, Object>> existingPages = jdbcTemplate.queryForList(
-                "SELECT asset_id FROM wiki_asset WHERE asset_type = ? AND tags = ? LIMIT 1",
-                WikiAssetType.WIKI_PAGE.getCode(),
-                sourceTag
-        );
+        List<Map<String, Object>> existingPages = assetMapper.selectPageBySourceTag(
+                WikiAssetType.WIKI_PAGE.getCode(), sourceTag);
 
         if (existingPages.isEmpty()) {
-            // 插入新页面
-            jdbcTemplate.update(
-                    "INSERT INTO wiki_asset (space_id, asset_name, asset_type, domain_name, description, content, tags, status, " +
-                            "create_by, create_time, update_by, update_time) " +
-                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'system', NOW(), 'system', NOW())",
-                    spaceId,
-                    title,
-                    WikiAssetType.WIKI_PAGE.getCode(),
-                    source.get("domain_name"),
-                    summary,
-                    content,
-                    sourceTag,
-                    WikiAssetStatus.ACTIVE.getCode()
-            );
+            // 首次整理：插入新页面
+            assetMapper.insertIngestedPage(spaceId, title, WikiAssetType.WIKI_PAGE.getCode(),
+                    source.get("domain_name"), summary, content, sourceTag, WikiAssetStatus.ACTIVE.getCode());
         } else {
-            // 更新已有页面
+            // 重复整理：更新同一来源页面，保持与原始资料一一对应
             Long pageAssetId = ((Number) existingPages.get(0).get("asset_id")).longValue();
-            jdbcTemplate.update(
-                    "UPDATE wiki_asset " +
-                            "SET space_id = ?, asset_name = ?, domain_name = ?, description = ?, content = ?, " +
-                            "update_by = 'system', update_time = NOW() " +
-                            "WHERE asset_id = ?",
-                    spaceId,
-                    title,
-                    source.get("domain_name"),
-                    summary,
-                    content,
-                    pageAssetId
-            );
+            assetMapper.updateIngestedPage(spaceId, title, source.get("domain_name"), summary, content, pageAssetId);
         }
 
         // 刷新索引

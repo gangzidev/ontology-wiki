@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ontologywiki.ontology.mapper.AnalysisMemoryMapper">
+
+    <!-- 记忆列表统一返回列 -->
+    <sql id="memoryColumns">
+        memory_id, task_id, proposal_id, memory_type, title, content, status, version,
+        created_by, create_time, reviewed_by, review_time
+    </sql>
+
+    <select id="selectTaskInfo" resultType="java.util.LinkedHashMap">
+        SELECT task_name, wiki_space_id FROM analysis_task WHERE task_id = #{taskId}
+    </select>
+
+    <select id="selectMaxVersion" resultType="java.lang.Integer">
+        SELECT COALESCE(MAX(version), 0) FROM ontology_analysis_memory WHERE task_id = #{taskId}
+    </select>
+
+    <!-- 新增记忆：确认时写入审核人与审核时间，草稿时留空 -->
+    <insert id="insertMemory">
+        INSERT INTO ontology_analysis_memory
+            (space_id, task_id, proposal_id, memory_type, title, content, source_json, status, version,
+             created_by, create_time, update_by, update_time, reviewed_by, review_time)
+        VALUES (#{spaceId}, #{taskId}, #{proposalId}, 'ANALYSIS_ANSWER', #{title}, #{content}, #{sourceJson},
+                #{status}, #{version}, #{username}, NOW(), #{username}, NOW(),
+                <choose>
+                    <when test="confirmed">#{username}, #{reviewTime}</when>
+                    <otherwise>NULL, NULL</otherwise>
+                </choose>)
+    </insert>
+
+    <select id="selectLastInsertId" resultType="java.lang.Long">
+        SELECT LAST_INSERT_ID()
+    </select>
+
+    <update id="updateTaskSummary">
+        UPDATE analysis_task SET summary = #{summary}, update_by = #{username}, update_time = NOW()
+        WHERE task_id = #{taskId}
+    </update>
+
+    <select id="selectMemoriesByTask" resultType="java.util.LinkedHashMap">
+        SELECT <include refid="memoryColumns"/>
+        FROM ontology_analysis_memory
+        WHERE task_id = #{taskId}
+        ORDER BY memory_id DESC
+    </select>
+
+    <select id="selectLatestMemory" resultType="java.util.LinkedHashMap">
+        SELECT <include refid="memoryColumns"/>
+        FROM ontology_analysis_memory
+        WHERE task_id = #{taskId}
+        ORDER BY memory_id DESC
+        LIMIT 1
+    </select>
+
+    <!-- 已确认知识：任务 + 空间，用于同一任务及其所属行业的分析参考 -->
+    <select id="selectConfirmedByTaskAndSpace" resultType="java.util.LinkedHashMap">
+        SELECT title, content, version, task_id
+        FROM ontology_analysis_memory
+        WHERE status = #{status} AND (task_id = #{taskId} OR space_id = #{spaceId})
+        ORDER BY update_time DESC, memory_id DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="selectConfirmedByTask" resultType="java.util.LinkedHashMap">
+        SELECT title, content, version, task_id
+        FROM ontology_analysis_memory
+        WHERE status = #{status} AND task_id = #{taskId}
+        ORDER BY update_time DESC, memory_id DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="selectConfirmedBySpace" resultType="java.util.LinkedHashMap">
+        SELECT title, content, version, task_id
+        FROM ontology_analysis_memory
+        WHERE status = #{status} AND space_id = #{spaceId}
+        ORDER BY update_time DESC, memory_id DESC
+        LIMIT #{limit}
+    </select>
+
+</mapper>

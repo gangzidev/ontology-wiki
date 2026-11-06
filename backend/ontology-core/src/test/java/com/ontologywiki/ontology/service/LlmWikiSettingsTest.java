@@ -3,7 +3,6 @@ package com.ontologywiki.ontology.service;
 import com.ontologywiki.ontology.config.OntologyIntegrationProperties;
 import org.junit.Assert;
 import org.junit.Test;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.Map;
@@ -144,13 +143,15 @@ public class LlmWikiSettingsTest {
         }
     }
 
+    /**
+     * 构造只做纯逻辑校验的客户端。
+     *
+     * <p>这些用例覆盖的是地址校验、脱敏与候选上下文拼装，均不触达数据库，
+     * 因此 Mapper 依赖传 null 即可；一旦发生数据库访问会直接抛空指针，起到断言作用。
+     */
     private LlmWikiClient client(OntologyIntegrationProperties properties) {
-        JdbcTemplate jdbc = new JdbcTemplate() {
-            @Override public java.util.List<Map<String,Object>> queryForList(String sql, Object... args) {
-                throw new AssertionError("Unexpected database access");
-            }
-        };
-        return new LlmWikiClient(properties, new RestTemplate(), jdbc, new CredentialService("test-key"));
+        return new LlmWikiClient(properties, new RestTemplate(), new CredentialService("test-key"),
+                null, null, null, null);
     }
 
     private Map<String,Object> twoSameNameFields() {

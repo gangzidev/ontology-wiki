@@ -2,7 +2,8 @@ package com.ontologywiki.ontology.service.analysis;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ontologywiki.ontology.domain.AnalysisMemoryStatus;
-import org.springframework.jdbc.core.JdbcTemplate;
+import com.ontologywiki.ontology.mapper.AnalysisMemoryMapper;
+import com.ontologywiki.ontology.mapper.WikiAssetMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -19,16 +20,26 @@ import java.util.*;
  *   <li>生成知识 Wiki 页面</li>
  * </ul>
  *
+ * <p>SQL 已下沉至 {@link AnalysisMemoryMapper} 与 {@link WikiAssetMapper}，本类只保留版本与内容编排逻辑。
+ *
  * @author ontology-wiki
  */
 @Service
 public class AnalysisMemoryService {
 
-    private final JdbcTemplate jdbcTemplate;
+    /** 已确认知识上下文最多注入的条数 */
+    private static final int CONFIRMED_CONTEXT_LIMIT = 80;
+
+    /** 沉淀为 Wiki 页面时使用的固定说明 */
+    private static final String KNOWLEDGE_PAGE_DESCRIPTION = "已确认分析知识";
+
+    private final AnalysisMemoryMapper memoryMapper;
+    private final WikiAssetMapper assetMapper;
     private final ObjectMapper objectMapper;
 
-    public AnalysisMemoryService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
-        this.jdbcTemplate = jdbcTemplate;
+    public AnalysisMemoryService(AnalysisMemoryMapper memoryMapper, WikiAssetMapper assetMapper, ObjectMapper objectMapper) {
+        this.memoryMapper = memoryMapper;
+        this.assetMapper = assetMapper;
         this.objectMapper = objectMapper;
     }
 
@@ -76,10 +87,7 @@ public class AnalysisMemoryService {
         }
 
         // 获取任务信息
-        Map<String, Object> task = jdbcTemplate.queryForMap(
-                "SELECT task_name, wiki_space_id FROM analysis_task WHERE task_id = ?",
-                taskId
-        );
+        Map<String, Object> task = memoryMapper.selectTaskInfo(taskId);
 
         // 计算版本号
         int version = calculateNextVersion(taskId);
@@ -98,30 +106,13 @@ public class AnalysisMemoryService {
         String sourceJson = buildSourceJson(taskId, proposalId);
 
         // 插入记忆记录
-        jdbcTemplate.update(
-                "INSERT INTO ontology_analysis_memory " +
-                        "(space_id, task_id, proposal_id, memory_type, title, content, source_json, status, version, " +
-                        "created_by, create_time, update_by, update_time, reviewed_by, review_time) " +
-                        "VALUES (?, ?, ?, 'ANALYSIS_ANSWER', ?, ?, ?, ?, ?, ?, NOW(), ?, NOW(), ?, ?)",
-                task.get("wiki_space_id"),
-                taskId,
-                proposalId,
+        memoryMapper.insertMemory(task.get("wiki_space_id"), taskId, proposalId,
                 String.valueOf(task.get("task_name")) + " · 分析答案 v" + version,
-                content,
-                sourceJson,
-                status.getCode(),
-                version,
-                username,
-                username,
-                confirm ? username : null,
-                confirm ? new Date() : null
-        );
+                content, sourceJson, status.getCode(), version, username,
+                confirm, confirm ? new Date() : null);
 
         // 查询刚插入的记录 ID
-        Long memoryId = jdbcTemplate.queryForObject(
-                "SELECT LAST_INSERT_ID()",
-                Long.class
-        );
+        Long memoryId = memoryMapper.selectLastInsertId();
 
         // 如果是确认状态，生成 Wiki 页面
         if (confirm && memoryId != null) {
@@ -129,12 +120,7 @@ public class AnalysisMemoryService {
         }
 
         // 更新任务摘要
-        jdbcTemplate.update(
-                "UPDATE analysis_task SET summary = ?, update_by = ?, update_time = NOW() WHERE task_id = ?",
-                clip(answer.trim(), 60000),
-                username,
-                taskId
-        );
+        memoryMapper.updateTaskSummary(clip(answer.trim(), 60000), username, taskId);
 
         return memoryId;
     }
@@ -153,36 +139,16 @@ public class AnalysisMemoryService {
                 (proposalId == null ? "—" : proposalId) +
                 "。该页面由分析者确认后沉淀，可在后续分析中作为已确认知识参考。";
 
-        List<Map<String, Object>> existingPages = jdbcTemplate.queryForList(
-                "SELECT asset_id FROM wiki_asset WHERE tags = ? LIMIT 1",
-                tag
-        );
+        // 同一记忆只对应一个知识页面，已存在则覆盖内容，避免重复沉淀
+        List<Map<String, Object>> existingPages = assetMapper.selectPageByTag(tag);
 
         if (existingPages.isEmpty()) {
-            jdbcTemplate.update(
-                    "INSERT INTO wiki_asset " +
-                            "(space_id, asset_name, asset_type, description, content, tags, status, " +
-                            "create_by, create_time, update_by, update_time) " +
-                            "VALUES (?, ?, 'WIKI_PAGE', '已确认分析知识', ?, ?, '0', ?, NOW(), ?, NOW())",
-                    task.get("wiki_space_id"),
-                    title,
-                    pageContent,
-                    tag,
-                    username,
-                    username
-            );
+            assetMapper.insertKnowledgePage(task.get("wiki_space_id"), title,
+                    KNOWLEDGE_PAGE_DESCRIPTION, pageContent, tag, username);
         } else {
-            jdbcTemplate.update(
-                    "UPDATE wiki_asset " +
-                            "SET space_id = ?, asset_name = ?, description = '已确认分析知识', content = ?, " +
-                            "update_by = ?, update_time = NOW() " +
-                            "WHERE asset_id = ?",
-                    task.get("wiki_space_id"),
-                    title,
-                    pageContent,
-                    username,
-                    existingPages.get(0).get("asset_id")
-            );
+            assetMapper.updateKnowledgePage(task.get("wiki_space_id"), title,
+                    KNOWLEDGE_PAGE_DESCRIPTION, pageContent, username,
+                    ((Number) existingPages.get(0).get("asset_id")).longValue());
         }
     }
 
@@ -193,14 +159,7 @@ public class AnalysisMemoryService {
      * @return 记忆列表
      */
     public List<Map<String, Object>> listMemories(Long taskId) {
-        return jdbcTemplate.queryForList(
-                "SELECT memory_id, task_id, proposal_id, memory_type, title, content, status, version, " +
-                        "created_by, create_time, reviewed_by, review_time " +
-                        "FROM ontology_analysis_memory " +
-                        "WHERE task_id = ? " +
-                        "ORDER BY memory_id DESC",
-                taskId
-        );
+        return memoryMapper.selectMemoriesByTask(taskId);
     }
 
     /**
@@ -210,16 +169,7 @@ public class AnalysisMemoryService {
      * @return 最新记忆，不存在时返回空 Map
      */
     public Map<String, Object> getLatestMemory(Long taskId) {
-        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                "SELECT memory_id, task_id, proposal_id, memory_type, title, content, status, version, " +
-                        "created_by, create_time, reviewed_by, review_time " +
-                        "FROM ontology_analysis_memory " +
-                        "WHERE task_id = ? " +
-                        "ORDER BY memory_id DESC " +
-                        "LIMIT 1",
-                taskId
-        );
-
+        List<Map<String, Object>> rows = memoryMapper.selectLatestMemory(taskId);
         return rows.isEmpty() ? Collections.emptyMap() : rows.get(0);
     }
 
@@ -235,45 +185,23 @@ public class AnalysisMemoryService {
             return "";
         }
 
+        String status = AnalysisMemoryStatus.CONFIRMED.getCode();
         List<Map<String, Object>> rows;
 
+        // 三种检索范围：任务 + 空间并集、仅任务、仅空间
         if (taskId != null && spaceId != null) {
-            rows = jdbcTemplate.queryForList(
-                    "SELECT title, content, version, task_id " +
-                            "FROM ontology_analysis_memory " +
-                            "WHERE status = ? AND (task_id = ? OR space_id = ?) " +
-                            "ORDER BY update_time DESC, memory_id DESC " +
-                            "LIMIT 80",
-                    AnalysisMemoryStatus.CONFIRMED.getCode(),
-                    taskId,
-                    spaceId
-            );
+            rows = memoryMapper.selectConfirmedByTaskAndSpace(status, taskId, spaceId, CONFIRMED_CONTEXT_LIMIT);
         } else if (taskId != null) {
-            rows = jdbcTemplate.queryForList(
-                    "SELECT title, content, version, task_id " +
-                            "FROM ontology_analysis_memory " +
-                            "WHERE status = ? AND task_id = ? " +
-                            "ORDER BY update_time DESC, memory_id DESC " +
-                            "LIMIT 80",
-                    AnalysisMemoryStatus.CONFIRMED.getCode(),
-                    taskId
-            );
+            rows = memoryMapper.selectConfirmedByTask(status, taskId, CONFIRMED_CONTEXT_LIMIT);
         } else {
-            rows = jdbcTemplate.queryForList(
-                    "SELECT title, content, version, task_id " +
-                            "FROM ontology_analysis_memory " +
-                            "WHERE status = ? AND space_id = ? " +
-                            "ORDER BY update_time DESC, memory_id DESC " +
-                            "LIMIT 80",
-                    AnalysisMemoryStatus.CONFIRMED.getCode(),
-                    spaceId
-            );
+            rows = memoryMapper.selectConfirmedBySpace(status, spaceId, CONFIRMED_CONTEXT_LIMIT);
         }
 
         if (rows.isEmpty()) {
             return "";
         }
 
+        // 拼装为模型可直接阅读的知识摘要
         StringBuilder context = new StringBuilder();
         for (Map<String, Object> row : rows) {
             context.append("\n- ")
@@ -293,12 +221,7 @@ public class AnalysisMemoryService {
      * 计算下一个版本号
      */
     private int calculateNextVersion(Long taskId) {
-        Integer maxVersion = jdbcTemplate.queryForObject(
-                "SELECT COALESCE(MAX(version), 0) FROM ontology_analysis_memory WHERE task_id = ?",
-                Integer.class,
-                taskId
-        );
-
+        Integer maxVersion = memoryMapper.selectMaxVersion(taskId);
         return (maxVersion == null ? 0 : maxVersion) + 1;
     }
 

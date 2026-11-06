@@ -1,8 +1,8 @@
 package com.ontologywiki.ontology.service.llm;
 
 import com.ontologywiki.ontology.config.OntologyIntegrationProperties;
+import com.ontologywiki.ontology.mapper.LlmSettingsMapper;
 import com.ontologywiki.ontology.service.CredentialService;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,39 +22,40 @@ import java.util.Map;
  *   <li>配置有效性验证</li>
  * </ul>
  *
+ * <p>SQL 已下沉至 {@link LlmSettingsMapper} 与对应 XML，本类只保留校验与内存配置同步。
+ *
  * @author ontology-wiki
  */
 @Service
 public class LlmConfigService {
 
+    /** 旧版单配置的固定标识 */
     private static final int SETTING_ID = 1;
 
     private final OntologyIntegrationProperties properties;
     private final CredentialService credentialService;
-    private final JdbcTemplate jdbcTemplate;
+    private final LlmSettingsMapper settingsMapper;
     private final LlmClient llmClient;
 
     public LlmConfigService(OntologyIntegrationProperties properties,
                             CredentialService credentialService,
-                            JdbcTemplate jdbcTemplate,
+                            LlmSettingsMapper settingsMapper,
                             LlmClient llmClient) {
         this.properties = properties;
         this.credentialService = credentialService;
-        this.jdbcTemplate = jdbcTemplate;
+        this.settingsMapper = settingsMapper;
         this.llmClient = llmClient;
     }
 
     /**
-     * 应用启动时加载数据库中的配置
+     * 应用启动时加载数据库中的配置。
+     *
+     * <p>只取最新一条启用配置作为兜底，不再依赖固定的 setting_id=1，
+     * 避免旧单配置行覆盖「模型配置」页面维护的多场景配置。
      */
     @PostConstruct
     public void loadStoredSettings() {
-        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                "SELECT enabled, api_base_url, api_key_enc, model " +
-                        "FROM ontology_llm_settings WHERE setting_id = ?",
-                SETTING_ID
-        );
-
+        List<Map<String, Object>> rows = settingsMapper.selectLatestEnabled();
         if (rows.isEmpty()) {
             return;
         }
@@ -227,37 +228,20 @@ public class LlmConfigService {
      */
     private void persistSettings(String apiBaseUrl, String model, String apiKey,
                                   boolean enabled, String username) {
-        List<Map<String, Object>> existing = jdbcTemplate.queryForList(
-                "SELECT setting_id FROM ontology_llm_settings WHERE setting_id = ?",
-                SETTING_ID
-        );
-
+        boolean exists = !settingsMapper.selectBySettingId(SETTING_ID).isEmpty();
         String encryptedKey = isBlank(apiKey) ? null : credentialService.encrypt(apiKey);
 
-        if (existing.isEmpty()) {
+        if (!exists) {
             // 首次插入
-            jdbcTemplate.update(
-                    "INSERT INTO ontology_llm_settings (setting_id, enabled, api_base_url, api_key_enc, model, update_by, update_time) " +
-                            "VALUES (?, ?, ?, ?, ?, ?, NOW())",
-                    SETTING_ID, enabled, apiBaseUrl, encryptedKey, model, username
-            );
+            settingsMapper.insertSingleSetting(SETTING_ID, enabled, apiBaseUrl, encryptedKey, model, username);
+            return;
+        }
+
+        // 更新已有配置：无密钥表示清空，有密钥则覆盖
+        if (encryptedKey == null) {
+            settingsMapper.updateSingleSettingClearKey(SETTING_ID, enabled, apiBaseUrl, model, username);
         } else {
-            // 更新已有配置
-            if (encryptedKey == null) {
-                jdbcTemplate.update(
-                        "UPDATE ontology_llm_settings " +
-                                "SET enabled = ?, api_base_url = ?, api_key_enc = NULL, model = ?, update_by = ?, update_time = NOW() " +
-                                "WHERE setting_id = ?",
-                        enabled, apiBaseUrl, model, username, SETTING_ID
-                );
-            } else {
-                jdbcTemplate.update(
-                        "UPDATE ontology_llm_settings " +
-                                "SET enabled = ?, api_base_url = ?, api_key_enc = ?, model = ?, update_by = ?, update_time = NOW() " +
-                                "WHERE setting_id = ?",
-                        enabled, apiBaseUrl, encryptedKey, model, username, SETTING_ID
-                );
-            }
+            settingsMapper.updateSingleSetting(SETTING_ID, enabled, apiBaseUrl, encryptedKey, model, username);
         }
     }
 
