@@ -89,3 +89,63 @@
 @media (max-width: 768px) {
   .app-container { padding: 20px 16px 32px; }
 }
+
+/* ── 通用弹窗：append-to-body 挂载到 body，必须用全局样式 ── */
+.model-dialog.el-dialog {
+  max-width: calc(100vw - 32px);
+  border-radius: 16px;
+  box-shadow: rgba(0, 0, 0, 0.01) 0 1px 3px, rgba(0, 0, 0, 0.02) 0 3px 7px,
+              rgba(0, 0, 0, 0.02) 0 7px 15px, rgba(0, 0, 0, 0.04) 0 14px 28px,
+              rgba(0, 0, 0, 0.05) 0 23px 52px;
+}
+.model-dialog .el-dialog__header { padding: 24px 28px 0; }
+.model-dialog .el-dialog__headerbtn { top: 22px; right: 24px; }
+.model-dialog .el-dialog__headerbtn .el-dialog__close { color: #a39e98; }
+.model-dialog .el-dialog__headerbtn:hover .el-dialog__close { color: #0075de; }
+.model-dialog .el-dialog__body { padding: 18px 28px 4px; }
+.model-dialog .el-dialog__footer { padding: 18px 28px 20px; border-top: 1px solid rgba(0, 0, 0, 0.08); border-radius: 0 0 16px 16px; background: #faf9f8; }
+
+/* 标题区：主标题 + 一句说明 */
+.model-dialog .dialog-title span { display: block; color: rgba(0, 0, 0, 0.95); font-size: 19px; font-weight: 700; letter-spacing: -0.4px; }
+.model-dialog .dialog-title p { margin: 6px 0 0; color: #a39e98; font-size: 13px; line-height: 1.5; }
+
+/* 分组与表单 */
+.model-dialog .form-section + .form-section { margin-top: 6px; padding-top: 20px; border-top: 1px solid rgba(0, 0, 0, 0.07); }
+.model-dialog .form-section-title { margin: 0 0 14px; color: #a39e98; font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+.model-dialog .el-form-item { margin-bottom: 16px; }
+.model-dialog .el-form-item__label { padding-bottom: 6px; color: #615d59; font-size: 12px; font-weight: 600; line-height: 1.4; }
+.model-dialog .el-input__inner {
+  height: 38px;
+  border: 1px solid #dddddd;
+  border-radius: 8px;
+  color: rgba(0, 0, 0, 0.9);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.model-dialog .el-input__inner:hover { border-color: #c9c5c0; }
+.model-dialog .el-input__inner:focus { border-color: #0075de; box-shadow: 0 0 0 3px rgba(9, 127, 232, 0.12); }
+.model-dialog .field-hint { margin: -6px 0 0; color: #a39e98; font-size: 12px; line-height: 1.55; }
+.model-dialog .switch-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.model-dialog .switch-hint { color: #615d59; font-size: 12px; }
+.model-dialog .clear-key { margin: -4px 0 12px; }
+
+/* 连通性测试结果：失败信息可换行不撑破弹窗 */
+.model-dialog .draft-test-result { display: flex; align-items: flex-start; gap: 6px; margin: 2px 0 12px; padding: 8px 10px; border-radius: 8px; font-size: 12px; line-height: 1.5; word-break: break-word; }
+.model-dialog .draft-test-result.ok { background: #eef6ee; color: #1a7a3a; }
+.model-dialog .draft-test-result.fail { background: #fdf0ef; color: #b3261e; }
+
+/* 底部：测试连通性在最左，取消/主操作在右侧，三者同一行垂直居中对齐 */
+.model-dialog .dialog-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.model-dialog .dialog-foot .el-button { margin-left: 0; }
+.model-dialog .dialog-foot-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.model-dialog .model-btn-primary.el-button { padding: 9px 18px; border: 1px solid transparent; border-radius: 6px; background: #0075de; color: #fff; font-weight: 600; }
+.model-dialog .model-btn-primary.el-button:hover,
+.model-dialog .model-btn-primary.el-button:focus { background: #005bab; color: #fff; }
+.model-dialog .model-btn-ghost.el-button { padding: 9px 18px; border: 1px solid transparent; border-radius: 6px; background: rgba(0, 0, 0, 0.05); color: rgba(0, 0, 0, 0.95); font-weight: 500; }
+.model-dialog .model-btn-ghost.el-button:hover { background: rgba(0, 0, 0, 0.09); color: rgba(0, 0, 0, 0.95); }
+
+@media (max-width: 640px) {
+  .model-dialog .el-col-12 { width: 100%; }
+  .model-dialog .el-dialog__header { padding: 20px 20px 0; }
+  .model-dialog .el-dialog__body { padding: 16px 20px 4px; }
+  .model-dialog .el-dialog__footer { padding: 16px 20px; }
+}

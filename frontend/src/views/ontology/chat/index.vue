@@ -1028,7 +1028,7 @@ export default {
         }
       }
       this.$router.push({
-        path: '/ontology/analysis',
+        path: '/engineering/analysis',
         query: { new: '1', wiki_space_id: this.spaceId || undefined, scope: scope || undefined },
       })
     },

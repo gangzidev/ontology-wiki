@@ -1,16 +1,13 @@
 <template>
   <el-menu class="topbar-menu" :default-active="activeMenu" :active-text-color="theme" mode="horizontal">
-    <sidebar-item :key="route.path + index" v-for="(route, index) in primaryMenus" :item="route" :base-path="route.path" />
-    <el-submenu v-for="group in featuredGroups" :key="group.key" :index="'featured-' + group.key" class="featured-menu" :class="{ 'is-active': isGroupActive(group) }">
-      <template slot="title"><i :class="group.icon"></i><span>{{ group.title }}</span><small>{{ group.items.length }}</small></template>
-      <sidebar-item :key="route.path + index" v-for="(route, index) in group.items" :item="route" :base-path="route.path" />
-    </el-submenu>
-    <el-submenu v-if="moreMenus.length" index="more" class="more-menu" :class="{ 'is-active': moreActive }">
-      <template slot="title"><i class="el-icon-more"></i><span>更多</span></template>
-      <el-submenu v-for="group in moreGroups" :key="group.key" :index="'more-' + group.key" class="more-group">
-        <template slot="title"><i :class="group.icon"></i><span>{{ group.title }}</span><small>{{ group.items.length }}</small></template>
-        <sidebar-item :key="route.path + index" v-for="(route, index) in group.items" :item="route" :base-path="route.path" />
-      </el-submenu>
+    <!-- 平铺入口：首页、工作台 -->
+    <sidebar-item v-for="route in primaryMenus" :key="route.path" :item="route" :base-path="route.path" />
+    <!-- 分组入口：完全由数据库菜单层级决定（知识中心 / 本体工程 / AI 服务 / 平台运维） -->
+    <el-submenu v-for="group in navGroups" :key="group.key" :index="group.key" :class="{ 'is-active': isGroupActive(group) }">
+      <template slot="title">
+        <item :icon="group.icon" :title="group.title" />
+      </template>
+      <sidebar-item v-for="(route, index) in group.items" :key="route.path + index" :item="route" :base-path="route.path" />
     </el-submenu>
   </el-menu>
 </template>
@@ -18,78 +15,105 @@
 <script>
 import path from 'path'
 import SidebarItem from '../Sidebar/SidebarItem'
+import Item from '../Sidebar/Item'
+
+/**
+ * 需要平铺到顶部、不放进下拉分组的入口。
+ * 只保留这两个：首页来自前端常量路由，工作台是单页菜单，
+ * 其余分组一律按 sys_menu 的 parent_id 层级自动生成。
+ */
+const PRIMARY_TITLES = ['首页', '工作台']
 
 export default {
-  components: { SidebarItem },
+  components: { SidebarItem, Item },
   computed: {
     theme() {
       return this.$store.state.settings.theme
     },
-    topMenus() {
-      return this.$store.state.permission.sidebarRouters
-        .filter(route => !route.hidden)
-        .reduce((menus, route) => {
-          const children = (route.children || []).filter(child => !child.hidden)
-          if (!children.length) return menus.concat(route)
-          return menus.concat(children.map(child => ({
+    /** 顶层路由（已过滤隐藏项） */
+    topRoutes() {
+      return (this.$store.state.permission.sidebarRouters || []).filter(route => !route.hidden)
+    },
+    /** 把路由树翻译成「平铺入口 + 下拉分组」 */
+    navModel() {
+      const flatItems = []
+      const groups = []
+
+      this.topRoutes.forEach(route => {
+        const children = (route.children || []).filter(child => !child.hidden)
+        const isRootWrapper = route.path === '' || route.path === '/'
+
+        // 根包装路由（首页所在的 Layout 壳）直接把子项平铺出来
+        if (isRootWrapper) {
+          children.forEach(child => flatItems.push(this.toFlatItem(child, route.path)))
+          return
+        }
+        // 没有子项的一级菜单（工作台）直接平铺
+        if (!children.length) {
+          flatItems.push(this.toFlatItem(route, '/'))
+          return
+        }
+        groups.push({
+          key: route.path,
+          title: (route.meta && route.meta.title) || '',
+          icon: route.meta && route.meta.icon,
+          activePaths: children.map(child => path.resolve(route.path || '/', child.path || '')),
+          items: children.map(child => ({
             ...child,
             path: path.resolve(route.path || '/', child.path || '')
-          })))
-        }, [])
+          }))
+        })
+      })
+
+      // 分组内的单页若属于平铺白名单，提升到顶部并移出分组
+      groups.forEach(group => {
+        group.items = group.items.filter(item => {
+          const title = item.meta && item.meta.title
+          if (PRIMARY_TITLES.includes(title)) {
+            flatItems.push(this.toFlatItem(item, '/'))
+            return false
+          }
+          return true
+        })
+      })
+
+      // 平铺入口按白名单顺序排列，保证 首页 → 工作台
+      flatItems.sort((a, b) => {
+        const ai = PRIMARY_TITLES.indexOf(a.title)
+        const bi = PRIMARY_TITLES.indexOf(b.title)
+        return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi)
+      })
+
+      return { flatItems, groups: groups.filter(group => group.items.length) }
     },
     primaryMenus() {
-      const preferred = ['首页', '工作台', 'Wiki资产', '数据源管理', '分析任务']
-      return preferred.map(title => this.topMenus.find(route => route.meta && route.meta.title === title)).filter(Boolean)
+      return this.navModel.flatItems.map(entry => entry.route)
     },
-    secondaryGroups() {
-      const primaryPaths = this.primaryMenus.map(route => route.path)
-      const groups = [
-        { key: 'ontology', title: '本体配置', icon: 'el-icon-set-up', items: [] },
-        { key: 'knowledge', title: '知识资产', icon: 'el-icon-collection', items: [] },
-        { key: 'system', title: '系统管理', icon: 'el-icon-setting', items: [] },
-        { key: 'other', title: '其他功能', icon: 'el-icon-more', items: [] }
-      ]
-      this.topMenus.filter(route => !primaryPaths.includes(route.path)).forEach(route => {
-        const title = route.meta && route.meta.title
-        const group = ['配置草案', '导入记录'].includes(title)
-          ? groups[0]
-          : ['Wiki空间', '行业知识空间', '业务知识问答'].includes(title)
-            ? groups[1]
-            : /用户|角色|菜单|部门|岗位|字典|参数|通知|日志|监控|定时|代码生成|服务监控|在线用户/.test(title || '')
-              ? groups[2]
-              : groups[3]
-        group.items.push(route)
-      })
-      return groups.filter(group => group.items.length)
+    navGroups() {
+      return this.navModel.groups
     },
-    featuredGroups() {
-      return this.secondaryGroups.filter(group => ['ontology', 'knowledge'].includes(group.key))
-    },
-    moreGroups() {
-      return this.secondaryGroups.filter(group => !['ontology', 'knowledge'].includes(group.key))
-    },
-    moreMenus() {
-      return this.moreGroups.reduce((routes, group) => routes.concat(group.items), [])
-    },
-    moreActive() {
-      const current = this.$route.path
-      return this.moreMenus.some(route => current === route.path || current.indexOf(route.path + '/') === 0)
-    },
-    // 默认激活的菜单
     activeMenu() {
       const { meta, path } = this.$route
-      if (meta.activeMenu && !this.moreActive) {
+      if (meta.activeMenu) {
         return meta.activeMenu
       }
-      if (this.moreActive) return 'more'
       return path
-    },
-  },
-  methods: {
-    isGroupActive(group) {
-      return group.items.some(route => this.$route.path === route.path || this.$route.path.indexOf(route.path + '/') === 0)
     }
   },
+  methods: {
+    /** 包装成平铺入口，路径统一为绝对路径 */
+    toFlatItem(route, basePath) {
+      return {
+        title: (route.meta && route.meta.title) || '',
+        route: { ...route, path: path.resolve(basePath || '/', route.path || '') }
+      }
+    },
+    /** 当前路由是否落在该分组内，用于高亮 */
+    isGroupActive(group) {
+      const current = this.$route.path
+      return group.activePaths.some(p => current === p || current.indexOf(p + '/') === 0)
+    }
+  }
 }
 </script>
 
@@ -139,14 +163,7 @@ export default {
 
 .topbar-menu .svg-icon,
 .topbar-menu .menu-entry-icon { margin-right: 8px; }
-.topbar-menu .more-menu .el-menu,
-.topbar-menu .featured-menu .el-menu { min-width: 220px; max-height: calc(100vh - 86px); overflow-y: auto; padding: 8px; border: 1px solid #e5ebf3; border-radius: 10px; box-shadow: 0 12px 28px rgba(30, 55, 90, .14); }
-.topbar-menu .more-menu .el-menu-item,
-.topbar-menu .featured-menu .el-menu-item,
-.topbar-menu .more-menu .el-submenu__title { height: 38px; line-height: 38px; border-radius: 7px; }
-.topbar-menu .more-menu .more-group > .el-submenu__title { color: #344054 !important; font-weight: 600; }
-.topbar-menu .more-menu .more-group > .el-submenu__title small { float: right; min-width: 18px; height: 18px; margin-top: 10px; padding: 0 5px; color: #7c8a9f; background: #f1f4f8; border-radius: 9px; font-size: 11px; line-height: 18px; text-align: center; }
-.topbar-menu .more-menu .more-group > .el-submenu__title .el-submenu__icon-arrow { right: 10px; }
-.topbar-menu .featured-menu > .el-submenu__title small { display:inline-block; min-width:18px; height:18px; margin-left:7px; padding:0 5px; border-radius:9px; background:#f1f4f8; color:#7c8a9f; font-size:11px; line-height:18px; text-align:center; }
-.topbar-menu .featured-menu > .el-submenu__title .el-submenu__icon-arrow { margin-top:-5px; }
+.topbar-menu .el-submenu .el-menu { min-width: 220px; max-height: calc(100vh - 86px); overflow-y: auto; padding: 8px; border: 1px solid #e5ebf3; border-radius: 10px; box-shadow: 0 12px 28px rgba(30, 55, 90, .14); }
+.topbar-menu .el-submenu .el-menu-item,
+.topbar-menu .el-submenu .el-submenu__title { height: 38px; line-height: 38px; border-radius: 7px; }
 </style>

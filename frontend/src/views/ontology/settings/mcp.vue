@@ -67,23 +67,33 @@
     </section>
 
     <!-- ── 生成 Token 弹窗 ── -->
-    <el-dialog title="生成 MCP Token" :visible.sync="dialogOpen" width="480px" append-to-body @close="newToken = ''">
-      <el-form label-position="top">
-        <el-form-item label="令牌名称">
-          <el-input v-model="tokenForm.tokenName" placeholder="如：Claude Desktop / Cursor" maxlength="100" />
+    <el-dialog :visible.sync="dialogOpen" width="520px" top="12vh" append-to-body
+               custom-class="model-dialog" @close="resetDialog">
+      <div slot="title" class="dialog-title">
+        <span>生成 MCP Token</span>
+        <p>令牌用于 MCP 客户端鉴权，明文只会展示一次。</p>
+      </div>
+
+      <el-form v-if="!newToken" ref="tokenForm" :model="tokenForm" :rules="tokenRules" label-position="top">
+        <el-form-item label="令牌名称" prop="tokenName">
+          <el-input v-model="tokenForm.tokenName" placeholder="如：Claude Desktop / Cursor" maxlength="50"
+                    show-word-limit @keyup.enter.native="doCreate" />
+          <p class="field-hint">用于区分不同客户端，支持中英文、数字、空格及 . _ - ( )</p>
         </el-form-item>
       </el-form>
 
-      <div v-if="newToken" class="token-reveal">
+      <div v-else class="token-reveal">
         <p class="reveal-tip"><i class="el-icon-warning-outline" /> 请立即复制，此令牌不会再次显示。</p>
         <el-input :value="newToken" readonly class="mono">
           <el-button slot="append" icon="el-icon-copy-document" @click="copyToken">复制</el-button>
         </el-input>
       </div>
 
-      <div slot="footer">
-        <el-button class="btn-ghost" @click="dialogOpen = false">关闭</el-button>
-        <el-button v-if="!newToken" class="btn-primary" :loading="creating" @click="doCreate">生成</el-button>
+      <div slot="footer" class="dialog-foot">
+        <div class="dialog-foot-right">
+          <el-button class="model-btn-ghost" @click="dialogOpen = false">{{ newToken ? '完成' : '取消' }}</el-button>
+          <el-button v-if="!newToken" class="model-btn-primary" :loading="creating" @click="doCreate">生成 Token</el-button>
+        </div>
       </div>
     </el-dialog>
   </div>
@@ -102,6 +112,14 @@ export default {
       creating: false,
       newToken: '',
       tokenForm: { tokenName: '' },
+      /** 名称约束：必填、2–50 字符、只允许常见可读字符，前后端保持一致 */
+      tokenRules: {
+        tokenName: [
+          { required: true, message: '请输入令牌名称', trigger: 'blur' },
+          { min: 2, max: 50, message: '名称长度为 2–50 个字符', trigger: 'blur' },
+          { pattern: /^[A-Za-z0-9\u4e00-\u9fa5 ._\-()（）]+$/, message: '仅支持中英文、数字、空格及 . _ - ( )', trigger: 'blur' }
+        ]
+      },
       mcpConfigExample: `{
   "mcpServers": {
     "ontology-wiki": {
@@ -129,16 +147,28 @@ export default {
       this.tokenForm = { tokenName: '' }
       this.newToken = ''
       this.dialogOpen = true
+      this.$nextTick(() => { if (this.$refs.tokenForm) this.$refs.tokenForm.clearValidate() })
+    },
+    resetDialog() {
+      this.tokenForm = { tokenName: '' }
+      this.newToken = ''
+      this.creating = false
     },
     doCreate() {
-      this.creating = true
-      createMcpToken(this.tokenForm)
-        .then(({ data }) => {
-          this.newToken = (data && data.token) || ''
-          this.loadTokens()
-        })
-        .catch(() => this.$modal.msgError('生成失败'))
-        .finally(() => { this.creating = false })
+      this.$refs.tokenForm.validate(valid => {
+        if (!valid) return
+        const name = this.tokenForm.tokenName.trim()
+        const duplicated = this.tokens.some(item => String(item.token_name || '').trim().toLowerCase() === name.toLowerCase())
+        if (duplicated) return this.$modal.msgError('已存在同名令牌，请换一个名称')
+        this.creating = true
+        createMcpToken({ tokenName: name })
+          .then(({ data }) => {
+            this.newToken = (data && data.token) || ''
+            this.loadTokens()
+          })
+          .catch(() => this.$modal.msgError('生成失败'))
+          .finally(() => { this.creating = false })
+      })
     },
     removeToken(row) {
       this.$modal.confirm(`撤销后该令牌立即失效，确认撤销「${row.token_name}」？`).then(() => {
@@ -274,17 +304,20 @@ export default {
 /* ── 按钮体系 ── */
 .btn-primary,
 .btn-primary.el-button {
+  height: 38px;
+  padding: 0 16px;
   background: var(--blue);
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: 8px;
   color: #fff;
   font-weight: 600;
-  padding: 9px 16px;
-  transition: background 0.15s ease, transform 0.1s ease;
+  letter-spacing: 0.01em;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  transition: background 0.15s ease, box-shadow 0.18s ease, transform 0.15s ease;
 }
 .btn-primary:hover,
-.btn-primary:focus { background: var(--blue-active); color: #fff; }
-.btn-primary:active { transform: scale(0.97); }
+.btn-primary:focus { background: var(--blue-active); color: #fff; box-shadow: 0 6px 14px rgba(0, 117, 222, 0.22); transform: translateY(-1px); }
+.btn-primary:active { transform: translateY(0); }
 
 .btn-ghost,
 .btn-ghost.el-button {
@@ -307,9 +340,4 @@ export default {
 }
 .btn-danger:hover,
 .btn-danger:focus { background: #fdf0ef; color: #b3261e; }
-
-.mcp-page ::v-deep .el-input__inner { border: 1px solid #dddddd; border-radius: 4px; }
-.mcp-page ::v-deep .el-input__inner:focus { border-color: var(--blue); box-shadow: 0 0 0 2px rgba(9, 127, 232, 0.15); }
-.mcp-page ::v-deep .el-form-item__label { color: var(--ink-2); font-size: 12px; font-weight: 600; padding-bottom: 4px; }
-.mcp-page ::v-deep .el-dialog { border-radius: 16px; }
 </style>

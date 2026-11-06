@@ -14,13 +14,19 @@
     </header>
 
     <!-- ── 场景说明 ── -->
-    <section class="scene-strip">
-      <div v-for="scene in scenes" :key="scene.value" class="scene-item">
-        <span class="pill">{{ scene.value }}</span>
-        <div class="scene-text">
-          <strong>{{ scene.label }}</strong>
-          <span>{{ scene.desc }}</span>
-        </div>
+    <section class="scene-section">
+      <div class="scene-head">
+        <h2>使用场景</h2>
+        <span>同一场景存在多条配置时，仅最新一条生效</span>
+      </div>
+      <div class="scene-grid">
+        <article v-for="scene in scenes" :key="scene.value" class="scene-tile">
+          <div class="scene-tile-head">
+            <code class="scene-code">{{ scene.value }}</code>
+            <span class="scene-name">{{ scene.label }}</span>
+          </div>
+          <p class="scene-desc">{{ scene.desc }}</p>
+        </article>
       </div>
     </section>
 
@@ -90,69 +96,103 @@
     </section>
 
     <!-- ── 新增 / 编辑弹窗 ── -->
-    <el-dialog :title="form.id ? '编辑模型配置' : '新增模型配置'"
-               :visible.sync="dialogOpen" width="560px" append-to-body custom-class="notion-dialog"
-               @close="resetForm">
+    <el-dialog :visible.sync="dialogOpen" width="680px" top="8vh" append-to-body
+               custom-class="model-dialog" @close="resetForm">
+      <div slot="title" class="dialog-title">
+        <span>{{ form.id ? '编辑模型配置' : '新增模型配置' }}</span>
+        <p>为指定业务场景分配模型服务，保存后立即参与路由。</p>
+      </div>
+
       <el-form :model="form" label-position="top" size="medium">
-        <el-form-item label="配置名称">
-          <el-input v-model="form.settingName" placeholder="如：生产环境 GPT-4o" maxlength="100" />
-        </el-form-item>
-
-        <el-form-item label="使用场景">
-          <el-select v-model="form.usageScene" style="width:100%">
-            <el-option v-for="scene in scenes" :key="scene.value"
-                       :value="scene.value" :label="scene.optionLabel" />
-          </el-select>
+        <div class="form-section">
+          <p class="form-section-title">基本信息</p>
+          <el-row :gutter="16">
+            <el-col :span="24">
+              <el-form-item label="配置名称">
+                <el-input v-model="form.settingName" placeholder="如：生产环境 GPT-4o" maxlength="100" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="使用场景">
+                <el-select v-model="form.usageScene" style="width:100%">
+                  <el-option v-for="scene in scenes" :key="scene.value"
+                             :value="scene.value" :label="scene.value + ' · ' + scene.label" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="接入类型">
+                <el-select v-model="form.providerType" style="width:100%" @change="onProviderChange">
+                  <el-option value="OPENAI_COMPAT" label="API Key 模式" />
+                  <el-option value="OLLAMA" label="Ollama 本地模式" />
+                  <el-option value="LOCAL_COMPAT" label="本地 OpenAI 兼容" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+          </el-row>
           <p class="field-hint">{{ currentSceneHint }}</p>
-        </el-form-item>
+        </div>
 
-        <el-form-item label="接入类型">
-          <el-select v-model="form.providerType" style="width:100%" @change="onProviderChange">
-            <el-option value="OPENAI_COMPAT" label="API Key 模式（OpenAI / DeepSeek / Claude API）" />
-            <el-option value="OLLAMA" label="Ollama 本地模式（无需 API Key）" />
-            <el-option value="LOCAL_COMPAT" label="本地 OpenAI 兼容模式（LM Studio / vLLM）" />
-          </el-select>
-        </el-form-item>
+        <div class="form-section">
+          <p class="form-section-title">连接参数</p>
+          <el-row :gutter="16">
+            <el-col :span="24">
+              <el-form-item label="接口地址">
+                <el-input v-model="form.apiBaseUrl" placeholder="如：https://api.openai.com/v1" maxlength="1000" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="模型名称">
+                <el-input v-model="form.model" placeholder="如：gpt-4o / deepseek-chat" maxlength="200" />
+              </el-form-item>
+            </el-col>
+            <el-col v-if="form.providerType !== 'OLLAMA'" :span="12">
+              <el-form-item label="API Key">
+                <el-input v-model="form.apiKey" type="password" show-password maxlength="4096"
+                          :placeholder="form.id ? '留空则保留已保存的密钥' : '请输入 API Key'" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-checkbox v-if="form.id && form.providerType !== 'OLLAMA'" v-model="form.clearApiKey" class="clear-key">
+            清除已保存的 API Key
+          </el-checkbox>
+          <div v-if="draftTestResult" class="draft-test-result" :class="draftTestResult.connected ? 'ok' : 'fail'">
+            <i :class="draftTestResult.connected ? 'el-icon-success' : 'el-icon-error'" />
+            <span v-if="draftTestResult.connected">连接成功{{ draftTestResult.model ? '，模型：' + draftTestResult.model : '' }}</span>
+            <span v-else>连接失败：{{ draftTestResult.message || '请检查网络和接口地址' }}</span>
+          </div>
+        </div>
 
-        <el-form-item label="接口地址">
-          <el-input v-model="form.apiBaseUrl" placeholder="如：https://api.openai.com/v1" maxlength="1000" />
-        </el-form-item>
-
-        <el-form-item label="模型名称">
-          <el-input v-model="form.model" placeholder="如：gpt-4o / deepseek-chat / qwen2.5:7b" maxlength="200" />
-        </el-form-item>
-
-        <el-form-item v-if="form.providerType !== 'OLLAMA'" label="API Key">
-          <el-input v-model="form.apiKey" type="password" show-password maxlength="4096"
-                    :placeholder="form.id ? '留空则保留已保存的密钥' : '请输入 API Key'" />
-          <el-checkbox v-if="form.id" v-model="form.clearApiKey" class="clear-key">清除已保存的 API Key</el-checkbox>
-        </el-form-item>
-
-        <el-form-item label="启用状态">
+        <div class="form-section">
+          <p class="form-section-title">运行状态</p>
           <div class="switch-row">
             <el-switch v-model="form.enabled" />
             <span class="switch-hint">{{ form.enabled ? '该配置会参与模型路由' : '停用后不会参与任何场景路由' }}</span>
           </div>
-        </el-form-item>
+        </div>
       </el-form>
 
-      <div slot="footer">
-        <el-button class="btn-ghost" @click="dialogOpen = false">取消</el-button>
-        <el-button class="btn-primary" :loading="saving" @click="saveConfig">保存配置</el-button>
+      <div slot="footer" class="dialog-foot">
+        <el-button class="model-btn-ghost" icon="el-icon-connection"
+                   :loading="testingDraft" @click="testDraft">测试连通性</el-button>
+        <div class="dialog-foot-right">
+          <el-button class="model-btn-ghost" @click="dialogOpen = false">取消</el-button>
+          <el-button class="model-btn-primary" :loading="saving" @click="saveConfig">保存配置</el-button>
+        </div>
       </div>
     </el-dialog>
   </div>
 </template>
 
 <script>
-import { listLlmConfigs, addLlmConfig, updateLlmConfig, deleteLlmConfig, testLlmConfig } from '@/api/ontology'
+import { listLlmConfigs, addLlmConfig, updateLlmConfig, deleteLlmConfig, testLlmConfig, testLlmConfigDraft } from '@/api/ontology'
 
 /** 场景定义：value 与后端 usage_scene 取值保持一致 */
 const SCENES = [
-  { value: 'ALL', label: '通用兜底', desc: '其他场景未匹配时使用', optionLabel: 'ALL — 通用兜底（未匹配场景时使用）' },
-  { value: 'ANALYSIS', label: '分析语义补充', desc: '执行分析与答案优化，建议高能力模型', optionLabel: 'ANALYSIS — 分析语义补充（建议高能力模型）' },
-  { value: 'WIKI', label: 'Wiki 整理', desc: '把资料整理为 Wiki 页面', optionLabel: 'WIKI — Wiki 资料整理' },
-  { value: 'FAST', label: '快速问答', desc: '普通知识问答，建议轻量模型', optionLabel: 'FAST — 快速问答（建议轻量模型）' }
+  { value: 'ALL', label: '通用兜底', desc: '其他场景未匹配时使用' },
+  { value: 'ANALYSIS', label: '分析语义补充', desc: '执行分析与答案优化，建议高能力模型' },
+  { value: 'WIKI', label: 'Wiki 整理', desc: '把资料整理为 Wiki 页面' },
+  { value: 'FAST', label: '快速问答', desc: '普通知识问答，建议轻量模型' }
 ]
 
 function emptyForm() {
@@ -179,6 +219,9 @@ export default {
       configs: [],
       testingId: null,
       testResults: {},
+      /** 弹窗内“测试连通性”的加载态与结果 */
+      testingDraft: false,
+      draftTestResult: null,
       dialogOpen: false,
       form: emptyForm()
     }
@@ -203,6 +246,7 @@ export default {
     },
     openAdd() {
       this.form = emptyForm()
+      this.draftTestResult = null
       this.dialogOpen = true
     },
     openEdit(cfg) {
@@ -217,16 +261,39 @@ export default {
         usageScene: cfg.usage_scene || 'ALL',
         enabled: !!cfg.enabled
       }
+      this.draftTestResult = null
       this.dialogOpen = true
     },
     resetForm() {
       this.form = emptyForm()
+      this.draftTestResult = null
+      this.testingDraft = false
     },
     onProviderChange(type) {
+      // 切换接入类型会改变鉴权方式，旧的测试结果不再可信
+      this.draftTestResult = null
       // 选择 Ollama 且地址为空时给出默认值，减少手工输入
       if (type === 'OLLAMA' && !this.form.apiBaseUrl) {
         this.form.apiBaseUrl = 'http://localhost:11434'
       }
+    },
+    /** 测试当前表单填写的连通性：无需先保存，编辑态留空密钥会自动复用已保存密钥 */
+    testDraft() {
+      if (!this.form.apiBaseUrl.trim()) return this.$modal.msgError('请先填写接口地址')
+      if (!this.form.model.trim()) return this.$modal.msgError('请先填写模型名称')
+      this.testingDraft = true
+      this.draftTestResult = null
+      testLlmConfigDraft({
+        id: this.form.id,
+        providerType: this.form.providerType,
+        apiBaseUrl: this.form.apiBaseUrl.trim(),
+        model: this.form.model.trim(),
+        apiKey: this.form.apiKey,
+        clearApiKey: this.form.clearApiKey
+      })
+        .then(({ data }) => { this.draftTestResult = data || { connected: false, message: '未返回测试结果' } })
+        .catch(() => { this.draftTestResult = { connected: false, message: '请求失败，请检查网络和接口地址' } })
+        .finally(() => { this.testingDraft = false })
     },
     saveConfig() {
       if (!this.form.settingName.trim()) return this.$modal.msgError('请输入配置名称')
@@ -323,21 +390,57 @@ export default {
 }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
-/* ── 场景说明条 ── */
-.scene-strip {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+/* ── 场景说明：四个等宽块状卡片，横向平齐 ── */
+.scene-section { margin: 22px 0 26px; }
+.scene-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
   gap: 12px;
-  margin: 22px 0 26px;
-  padding: 16px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--warm);
+  margin-bottom: 12px;
 }
-.scene-item { display: flex; gap: 10px; align-items: flex-start; }
-.scene-text { display: flex; flex-direction: column; gap: 2px; }
-.scene-text strong { font-size: 13px; font-weight: 600; }
-.scene-text span { color: var(--ink-2); font-size: 12px; line-height: 1.5; }
+.scene-head h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.1px;
+}
+.scene-head span { color: var(--ink-3); font-size: 12px; }
+.scene-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.scene-tile {
+  min-height: 104px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: rgba(0, 0, 0, 0.02) 0 1px 3px;
+}
+.scene-tile-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.scene-code {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: var(--warm);
+  color: var(--ink-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.scene-name { color: var(--ink); font-size: 13px; font-weight: 600; white-space: nowrap; }
+.scene-desc { margin: 0; color: var(--ink-2); font-size: 12px; line-height: 1.6; }
+@media (max-width: 1080px) { .scene-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) {
+  .scene-head { flex-direction: column; gap: 4px; }
+  .scene-grid { grid-template-columns: 1fr; }
+}
 
 /* ── 药丸徽章 ── */
 .pill {
@@ -535,11 +638,4 @@ export default {
   border-color: var(--blue);
   box-shadow: 0 0 0 2px rgba(9, 127, 232, 0.15);
 }
-.settings-page ::v-deep .el-dialog {
-  border-radius: 16px;
-  box-shadow: rgba(0, 0, 0, 0.01) 0 1px 3px, rgba(0, 0, 0, 0.02) 0 3px 7px,
-              rgba(0, 0, 0, 0.02) 0 7px 15px, rgba(0, 0, 0, 0.04) 0 14px 28px,
-              rgba(0, 0, 0, 0.05) 0 23px 52px;
-}
-.settings-page ::v-deep .el-dialog__title { font-weight: 600; letter-spacing: -0.2px; }
 </style>

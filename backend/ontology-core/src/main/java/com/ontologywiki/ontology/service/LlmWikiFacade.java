@@ -61,9 +61,7 @@ public class LlmWikiFacade {
      * 兼容旧方法：仅重新加载配置，不再建表。
      *
      * <p>建表、加列、数据修正与菜单初始化已全部迁到
-     * {@code backend/sql/ontology-wiki.sql}（全新安装）与
-     * {@code backend/sql/ontology-wiki-upgrade.sql}（存量升级），
-     * 由部署时人工执行，应用启动不再做任何结构变更。
+     * {@code backend/sql/ontology-wiki.sql}，由部署时人工执行，应用启动不再做任何结构变更。
      *
      * @deprecated 结构变更请执行 SQL 脚本，本方法只保留配置热加载语义
      */

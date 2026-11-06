@@ -14,12 +14,9 @@
 
 ### 数据库
 
-首次部署到全新的专用数据库时，按顺序执行：
+首次部署到全新的专用数据库时，执行 [数据库初始化脚本](backend/sql/ontology-wiki.sql)：它一次性创建系统表、业务表并写入菜单与权限数据。该脚本包含 `DROP TABLE`，只允许对空库执行；不要在已有业务数据或已有数据的库上运行。
 
-1. [系统初始化脚本](backend/sql/init.sql)：创建系统表并写入默认数据。该脚本包含 `DROP TABLE`，只允许对空库执行；不要在已有业务数据或已有数据的库上运行。
-2. [本体 Wiki 业务表与菜单脚本](backend/sql/ontology-wiki.sql)。
-
-`init.sql` 若目标库已经有基础表，请先备份并核对表结构，不要重跑系统初始化脚本；当前项目未提供对现有库的升级迁移脚本。不要把密码写入仓库。连接配置使用环境变量：
+目标库若已有数据，请先备份并核对表结构，不要重跑初始化脚本；当前项目未提供对现有库的升级迁移脚本。不要把密码写入仓库。连接配置使用环境变量：
 
 ```sh
 export ONTOLOGY_DB_URL='jdbc:mysql://10.19.38.197:3306/ontology-wiki?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai'

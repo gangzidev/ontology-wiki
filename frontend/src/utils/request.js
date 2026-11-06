@@ -29,8 +29,8 @@ function promptModelSetup(message) {
     '请配置模型',
     { confirmButtonText: '去配置', cancelButtonText: '稍后再说', type: 'warning' }
   ).then(() => {
-    if (router.currentRoute.path !== '/ontology/settings') {
-      router.push('/ontology/settings')
+    if (router.currentRoute.path !== '/ai/settings') {
+      router.push('/ai/settings')
     }
   }).catch(() => {}).finally(() => {
     modelSetupPrompting = false

@@ -31,6 +31,8 @@ export const addLlmConfig = data => request({ url: '/ontology/wiki/llm-configs',
 export const updateLlmConfig = (id, data) => request({ url: `/ontology/wiki/llm-configs/${id}`, method: 'put', data })
 export const deleteLlmConfig = id => request({ url: `/ontology/wiki/llm-configs/${id}`, method: 'delete' })
 export const testLlmConfig = id => request({ url: `/ontology/wiki/llm-configs/${id}/test`, method: 'post', timeout: 30000 })
+// 测试弹窗中尚未保存的配置（不需要先落库）
+export const testLlmConfigDraft = data => request({ url: '/ontology/wiki/llm-configs/test', method: 'post', data, timeout: 30000 })
 // MCP Token 管理
 export const listMcpTokens = () => request({ url: '/ontology/wiki/mcp-tokens', method: 'get' })
 export const createMcpToken = data => request({ url: '/ontology/wiki/mcp-tokens', method: 'post', data })

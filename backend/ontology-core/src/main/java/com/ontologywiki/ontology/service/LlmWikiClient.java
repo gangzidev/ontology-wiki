@@ -90,8 +90,7 @@ public class LlmWikiClient {
      * 避免旧的 setting_id=1 单配置与多配置并存时出现「配置了却不生效」。
      *
      * <p>注意：建表、加列、数据修正、菜单初始化等结构变更全部由
-     * {@code backend/sql/ontology-wiki.sql}（全新安装）与 {@code backend/sql/ontology-wiki-upgrade.sql}
-     * （存量升级）负责，应用启动不再执行任何 DDL。
+     * {@code backend/sql/ontology-wiki.sql} 负责，应用启动不再执行任何 DDL。
      */
     @PostConstruct
     public void loadSettingsOnStartup() {

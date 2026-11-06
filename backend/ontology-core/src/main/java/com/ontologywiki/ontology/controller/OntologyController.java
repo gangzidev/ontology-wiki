@@ -818,22 +818,55 @@ public class OntologyController extends BaseController {
             Map<String,Object> row = rows.get(0);
             String baseUrl = String.valueOf(row.get("api_base_url"));
             String apiKey  = row.get("api_key_enc") == null ? "" : credentials.decrypt(String.valueOf(row.get("api_key_enc")));
-            org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
-            headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
-            if (!apiKey.trim().isEmpty()) headers.setBearerAuth(apiKey.trim());
-            String uri = baseUrl.endsWith("/") ? baseUrl + "models" : baseUrl + "/models";
-            org.springframework.http.ResponseEntity<String> resp = rest.exchange(
-                    java.net.URI.create(uri), org.springframework.http.HttpMethod.GET,
-                    new org.springframework.http.HttpEntity<>(headers), String.class);
-            Map<String,Object> result = new LinkedHashMap<>();
-            result.put("connected", true);
-            result.put("model", row.get("model"));
-            try { result.put("response", json.readTree(resp.getBody())); } catch (Exception ignored) { result.put("response", resp.getBody()); }
-            return AjaxResult.success(result);
+            return AjaxResult.success(testModelConnection(baseUrl, apiKey, String.valueOf(row.get("model"))));
         } catch (Exception e) {
             Map<String,Object> result = new LinkedHashMap<>(); result.put("connected", false); result.put("message", e.getMessage());
             return AjaxResult.success(result);
         }
+    }
+
+    /**
+     * 测试尚未保存的模型配置连接。
+     * 编辑态若未重新输入密钥，可复用已保存密钥（按 id 读取），避免每次测试都要重新粘贴。
+     */
+    @PreAuthorize("@ss.hasPermi('ontology:llm:list')")
+    @PostMapping("/wiki/llm-configs/test")
+    public AjaxResult testLlmConfigDraft(@RequestBody(required=false) Map<String,Object> body) {
+        Map<String,Object> input = body == null ? new LinkedHashMap<>() : body;
+        String baseUrl = clip(String.valueOf(input.getOrDefault("apiBaseUrl","")),1000).trim();
+        String model = clip(String.valueOf(input.getOrDefault("model","")),200).trim();
+        if (baseUrl.isEmpty()) return AjaxResult.error("请先填写接口地址");
+        if (model.isEmpty()) return AjaxResult.error("请先填写模型名称");
+        String apiKey = input.get("apiKey") == null ? "" : String.valueOf(input.get("apiKey")).trim();
+        boolean clearKey = Boolean.parseBoolean(String.valueOf(input.getOrDefault("clearApiKey","false")));
+        Object id = input.get("id");
+        if (apiKey.isEmpty() && !clearKey && id != null && !String.valueOf(id).trim().isEmpty()) {
+            List<Map<String,Object>> rows = llmSettingsMapper.selectById(Long.parseLong(String.valueOf(id)));
+            if (!rows.isEmpty() && rows.get(0).get("api_key_enc") != null) {
+                apiKey = credentials.decrypt(String.valueOf(rows.get(0).get("api_key_enc")));
+            }
+        }
+        return AjaxResult.success(testModelConnection(baseUrl, apiKey, model));
+    }
+
+    /** 调用模型的 /models 接口验证地址、网络与密钥是否可用，异常统一转为 connected=false 返回 */
+    private Map<String,Object> testModelConnection(String baseUrl, String apiKey, String model) {
+        Map<String,Object> result = new LinkedHashMap<>();
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            if (apiKey != null && !apiKey.trim().isEmpty()) headers.setBearerAuth(apiKey.trim());
+            String uri = baseUrl.endsWith("/") ? baseUrl + "models" : baseUrl + "/models";
+            ResponseEntity<String> resp = rest.exchange(java.net.URI.create(uri), HttpMethod.GET,
+                    new HttpEntity<>(headers), String.class);
+            result.put("connected", true);
+            result.put("model", model);
+            try { result.put("response", json.readTree(resp.getBody())); } catch (Exception ignored) { result.put("response", resp.getBody()); }
+        } catch (Exception e) {
+            result.put("connected", false);
+            result.put("message", e.getMessage());
+        }
+        return result;
     }
 
     private String validProviderType(String v) {
@@ -858,7 +891,12 @@ public class OntologyController extends BaseController {
     @PostMapping("/wiki/mcp-tokens")
     public AjaxResult createMcpToken(@RequestBody(required=false) Map<String,Object> body) {
         try {
-            String name = body == null || body.get("tokenName") == null ? "MCP Token" : clip(String.valueOf(body.get("tokenName")),100);
+            String rawName = body == null || body.get("tokenName") == null ? "" : String.valueOf(body.get("tokenName")).trim();
+            // 名称约束与前端保持一致：非空、2–50 字符、只允许常见可读字符
+            if (rawName.isEmpty()) return AjaxResult.error("请输入令牌名称");
+            if (rawName.length() < 2 || rawName.length() > 50) return AjaxResult.error("令牌名称长度需为 2–50 个字符");
+            if (!rawName.matches("[\\p{L}\\p{N} ._()（）-]+")) return AjaxResult.error("令牌名称只能包含中英文、数字、空格及 . _ - ( )");
+            String name = clip(rawName, 100);
             // 生成随机 Token：32 字节 Base64url
             byte[] raw = new byte[32]; new java.security.SecureRandom().nextBytes(raw);
             String token = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(raw);

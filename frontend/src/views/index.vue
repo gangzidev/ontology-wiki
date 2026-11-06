@@ -6,8 +6,8 @@
         <h1>让数据库结构，长出业务语义。</h1>
         <p>以 Wiki 沉淀行业知识，结合 Hive、MySQL、PostgreSQL 结构分析，协同生成可审核的本体配置。</p>
         <div class="hero-actions">
-          <el-button type="primary" icon="el-icon-s-grid" @click="go('/ontology/dashboard')">进入工作台</el-button>
-          <el-button icon="el-icon-chat-line-round" @click="go('/ontology/chat')">业务知识问答</el-button>
+          <el-button type="primary" icon="el-icon-s-grid" @click="go('/knowledge/dashboard')">进入工作台</el-button>
+          <el-button icon="el-icon-chat-line-round" @click="go('/knowledge/chat')">业务知识问答</el-button>
         </div>
       </div>
       <div class="hero-graphic" aria-hidden="true">
@@ -42,9 +42,9 @@ export default {
   name: 'Overview',
   data: () => ({
     capabilities: [
-      { title: '业务知识问答', description: '按行业知识空间询问业务术语、规则和流程，回答附带资料依据。', action: '查业务知识', path: '/ontology/chat', icon: 'el-icon-chat-line-round', tone: 'blue' },
-      { title: '数据库结构分析', description: '连接业务数据库，梳理表、字段、注释与局部样例。', action: '管理数据源', path: '/ontology/datasource', icon: 'el-icon-coin', tone: 'green' },
-      { title: '本体配置协作', description: '整理对象、逻辑和动作候选，审阅后交由本体平台验证。', action: '查看配置草案', path: '/ontology/proposal', icon: 'el-icon-document-checked', tone: 'purple' }
+      { title: '业务知识问答', description: '按行业知识空间询问业务术语、规则和流程，回答附带资料依据。', action: '查业务知识', path: '/knowledge/chat', icon: 'el-icon-chat-line-round', tone: 'blue' },
+      { title: '数据库结构分析', description: '连接业务数据库，梳理表、字段、注释与局部样例。', action: '管理数据源', path: '/engineering/datasource', icon: 'el-icon-coin', tone: 'green' },
+      { title: '本体配置协作', description: '整理对象、逻辑和动作候选，审阅后交由本体平台验证。', action: '查看配置草案', path: '/engineering/proposal', icon: 'el-icon-document-checked', tone: 'purple' }
     ]
   }),
   methods: { go(path) { this.$router.push(path) } }
