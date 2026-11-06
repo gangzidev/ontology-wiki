@@ -76,7 +76,7 @@
 
       <el-form v-if="!newToken" ref="tokenForm" :model="tokenForm" :rules="tokenRules" label-position="top">
         <el-form-item label="令牌名称" prop="tokenName">
-          <el-input v-model="tokenForm.tokenName" placeholder="如：Claude Desktop / Cursor" maxlength="50"
+          <el-input v-model="tokenForm.tokenName" placeholder="如：Claude Desktop 或 Cursor" maxlength="50"
                     show-word-limit @keyup.enter.native="doCreate" />
           <p class="field-hint">用于区分不同客户端，支持中英文、数字、空格及 . _ - ( )</p>
         </el-form-item>
