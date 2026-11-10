@@ -33,7 +33,7 @@
       </el-row>
     </section>
 
-    <div class="review-note"><i class="el-icon-circle-check"></i><span>生成内容作为候选配置，由工程师审核并在本体平台测试后再导入。</span></div>
+    <div class="review-note"><i class="el-icon-circle-check"></i><span>生成内容作为候选配置，由本体工程师修正并标记草案完成后即可使用。</span></div>
   </div>
 </template>
 

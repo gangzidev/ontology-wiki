@@ -51,11 +51,11 @@ npm install
 npm run dev
 ```
 
-默认地址：`http://localhost:5173`。登录后从左侧“本体 Wiki”进入工作台、Wiki资产、数据源、分析任务、配置草案和导入记录。
+默认地址：`http://localhost:5173`。登录后从左侧“本体 Wiki”进入工作台、Wiki资产、数据源、分析任务和配置草案。
 
 ## 已接通能力与配置
 
-当前版本已接通：登录、菜单权限、Wiki 资产/空间/数据源/分析任务/配置草案/导入记录 CRUD；MySQL、PostgreSQL、Hive 的 JDBC 元数据扫描；按表选择的受限样例扫描；LLM Wiki 原生问答和基于数据库元数据的配置草案分析；分析答案可直接编辑或通过知识问答优化，确认后会生成带来源的 Wiki 知识页面并供后续分析优先参考；配置草案审核通过后的可配置 HTTP 导入。Hive 驱动由业务模块依赖引入。
+当前版本已接通：登录、菜单权限、Wiki 资产/空间/数据源/分析任务/配置草案管理；MySQL、PostgreSQL、Hive 的 JDBC 元数据扫描；按表选择的受限样例扫描；LLM Wiki 原生问答和基于数据库元数据的配置草案分析；分析答案可直接编辑或通过知识问答优化，确认后会生成带来源的 Wiki 知识页面并供后续分析优先参考；本体工程师完成草案修正后可通过配置化 HTTP 接口导入本体平台。Hive 驱动由业务模块依赖引入。
 
 LLM Wiki 已内置在本项目 Spring Boot 后端，不需要安装/启动第三方 Wiki 客户端或本地 Wiki 服务。问答、来源整理、Wiki 页面和索引保存在本项目 MySQL；模型由 OpenAI 兼容 API 提供：
 
@@ -77,9 +77,9 @@ export ONTOLOGY_ZHIWEN_TENANT_ID='...'
 export ONTOLOGY_ZHIWEN_AGENT_CODE='...'
 ```
 
-如需把审核通过的草案提交到本体平台，再设置 `ONTOLOGY_PLATFORM_ENABLED`、`ONTOLOGY_PLATFORM_BASE_URL`、`ONTOLOGY_PLATFORM_IMPORT_PATH` 和 `ONTOLOGY_PLATFORM_TOKEN`。导入协议由目标本体平台决定，未配置时不会发起外呼。
+如需把已完成的草案提交到本体平台，再设置 `ONTOLOGY_PLATFORM_ENABLED`、`ONTOLOGY_PLATFORM_BASE_URL`、`ONTOLOGY_PLATFORM_IMPORT_PATH` 和 `ONTOLOGY_PLATFORM_TOKEN`。导入协议由目标本体平台决定，未配置时不会发起外呼。
 
-数据源密码使用 `ONTOLOGY_CREDENTIAL_KEY` 做 AES-GCM 加密保存，只能通过“设置密码”操作写入；不要把数据库密码或外部密钥提交到仓库。分析生成的对象、关系、逻辑和动作只保存为配置草案，必须由工程师审核并在本体平台沙箱测试后再发布。
+数据源密码使用 `ONTOLOGY_CREDENTIAL_KEY` 做 AES-GCM 加密保存，只能通过“设置密码”操作写入；不要把数据库密码或外部密钥提交到仓库。分析生成的对象、关系、逻辑和动作只保存为配置草案，由本体工程师修正并标记“草案完成”后即可使用或导入本体平台。
 
 ## 当前限制
 

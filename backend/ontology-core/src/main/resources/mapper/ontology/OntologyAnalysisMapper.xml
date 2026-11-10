@@ -57,7 +57,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
 
     <!-- ==================== 配置草案 ==================== -->
 
-    <update id="reviewProposal">
+    <update id="completeProposal">
         update ontology_proposal
         set status = #{status}, review_by = #{username}, review_time = now(),
             review_comment = #{comment}, update_by = #{username}, update_time = now()
@@ -86,12 +86,6 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         where task_id = #{taskId} and proposal_id &lt; #{proposalId}
         order by proposal_id desc
         limit 1
-    </select>
-
-    <select id="selectProposalNameAndConfig" resultType="java.util.LinkedHashMap">
-        select proposal_name, config_json
-        from ontology_proposal
-        where proposal_id = #{proposalId}
     </select>
 
     <select id="selectLatestProposalId" resultType="java.util.LinkedHashMap">
@@ -156,13 +150,6 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     <!-- ==================== 导入记录 ==================== -->
 
     <insert id="insertImportRecord">
-        insert into ontology_import_record
-            (proposal_id, target_system, status, detail, create_by, create_time)
-        values
-            (#{proposalId}, #{targetSystem}, #{status}, #{detail}, #{username}, now())
-    </insert>
-
-    <insert id="insertImportRecordWithKey" useGeneratedKeys="true" keyProperty="generatedId" keyColumn="import_id">
         insert into ontology_import_record
             (proposal_id, target_system, status, detail, create_by, create_time)
         values

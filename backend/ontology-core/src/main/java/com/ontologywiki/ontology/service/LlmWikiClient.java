@@ -158,7 +158,7 @@ public class LlmWikiClient {
         if (!enabled()) throw new IllegalStateException("请先保存并启用模型配置");
         String answer = openAiText("请仅回复：连接成功");
         if (text(answer) == null) throw new IllegalStateException("模型 API 未返回有效内容");
-        result.put("connected", true); result.put("model", properties.getLlmWiki().getModel()); result.put("message", "模型 API 调用成功");
+        result.put("connected", true); result.put("model", configForScene("ALL").get("model")); result.put("message", "模型 API 调用成功");
         return result;
     }
 
@@ -325,19 +325,14 @@ public class LlmWikiClient {
      * 不再依赖旧的内存单配置，避免「大模型管理里已启用、系统却判定未启用」。
      */
     public boolean enabled() {
-        try {
-            List<Map<String,Object>> rows = analysisMapper.selectEnabledSettings(1);
-            for (Map<String,Object> row : rows) {
-                if (value(row.get("api_base_url")).trim().isEmpty()) continue;
-                // Ollama 等本地接入允许没有 API Key
-                if ("OLLAMA".equalsIgnoreCase(value(row.get("provider_type")))) return true;
-                if (!value(row.get("api_key_enc")).trim().isEmpty()) return true;
-            }
-        } catch (Exception ignored) {
-            // 表尚未创建等异常时回退到内存配置判断
+        List<Map<String,Object>> rows = analysisMapper.selectEnabledSettings(1);
+        for (Map<String,Object> row : rows) {
+            if (value(row.get("api_base_url")).trim().isEmpty()) continue;
+            // Ollama 等本地接入允许没有 API Key
+            if ("OLLAMA".equalsIgnoreCase(value(row.get("provider_type")))) return true;
+            if (!value(row.get("api_key_enc")).trim().isEmpty()) return true;
         }
-        OntologyIntegrationProperties.LlmWiki cfg = properties.getLlmWiki();
-        return cfg != null && cfg.isEnabled() && text(cfg.getApiBaseUrl()) != null && text(cfg.getApiKey()) != null;
+        return false;
     }
 
     public String query(String question) { return query(question, false); }
@@ -900,29 +895,24 @@ public class LlmWikiClient {
         if (rows.isEmpty() && !"ALL".equals(scene)) {
             rows = analysisMapper.selectEnabledSettingByScene(1, "ALL");
         }
-        Map<String,Object> result = new LinkedHashMap<>();
-        if (!rows.isEmpty()) {
-            Map<String,Object> row = rows.get(0);
-            result.put("apiBaseUrl", row.get("api_base_url") == null ? "" : String.valueOf(row.get("api_base_url")));
-            result.put("model", row.get("model") == null ? "" : String.valueOf(row.get("model")));
-            String apiKey = "";
-            if (row.get("api_key_enc") != null && !String.valueOf(row.get("api_key_enc")).trim().isEmpty()) {
-                try { apiKey = credentials.decrypt(String.valueOf(row.get("api_key_enc"))); } catch (Exception ignored) { }
-            }
-            result.put("apiKey", apiKey);
-        } else {
-            // 回退内存配置（startup 时 loadStoredSettings 写入）
-            OntologyIntegrationProperties.LlmWiki cfg = properties.getLlmWiki();
-            result.put("apiBaseUrl", cfg.getApiBaseUrl() == null ? "" : cfg.getApiBaseUrl());
-            result.put("model", cfg.getModel() == null ? "" : cfg.getModel());
-            result.put("apiKey", cfg.getApiKey() == null ? "" : cfg.getApiKey());
+        if (rows.isEmpty()) {
+            throw new IllegalStateException("尚未配置可用的大模型，请先在「模型配置」中添加并启用一个模型");
         }
+        Map<String,Object> row = rows.get(0);
+        Map<String,Object> result = new LinkedHashMap<>();
+        result.put("apiBaseUrl", row.get("api_base_url") == null ? "" : String.valueOf(row.get("api_base_url")));
+        result.put("model", row.get("model") == null ? "" : String.valueOf(row.get("model")));
+        String apiKey = "";
+        if (row.get("api_key_enc") != null && !String.valueOf(row.get("api_key_enc")).trim().isEmpty()) {
+            try { apiKey = credentials.decrypt(String.valueOf(row.get("api_key_enc"))); } catch (Exception ignored) { }
+        }
+        result.put("apiKey", apiKey);
         return result;
     }
 
     private String openAiExchange(String path,HttpMethod method,Object body) {
-        OntologyIntegrationProperties.LlmWiki cfg=properties.getLlmWiki();
-        return openAiExchange(path, method, body, cfg.getApiBaseUrl(), cfg.getApiKey());
+        Map<String,Object> cfg = configForScene("ALL");
+        return openAiExchange(path, method, body, String.valueOf(cfg.get("apiBaseUrl")), String.valueOf(cfg.get("apiKey")));
     }
 
     private String openAiExchange(String path,HttpMethod method,Object body,String baseUrl,String apiKey) {

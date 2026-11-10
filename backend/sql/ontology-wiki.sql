@@ -810,6 +810,8 @@ CREATE TABLE IF NOT EXISTS ontology_mcp_token (
 -- =============================================================================
 
 -- 业务页面
+DELETE FROM sys_role_menu WHERE menu_id IN (2006,2043,2050,2051,2052,2075);
+DELETE FROM sys_menu WHERE menu_id IN (2006,2043,2050,2051,2052,2075);
 INSERT IGNORE INTO sys_menu(menu_id, menu_name, parent_id, order_num, path, component, query, is_frame, is_cache, menu_type, visible, status, perms, icon, create_by, create_time) VALUES
 (2001,'工作台',        3000,1,'dashboard','ontology/dashboard/index',NULL,1,0,'C','0','0','ontology:dashboard:list','dashboard','admin',NOW()),
 (2007,'行业知识空间',  3000,2,'spaces',   'ontology/spaces/index',   NULL,1,0,'C','0','0','ontology:spaces:list','nested','admin',NOW()),
@@ -818,7 +820,6 @@ INSERT IGNORE INTO sys_menu(menu_id, menu_name, parent_id, order_num, path, comp
 (2003,'数据源管理',    3001,1,'datasource','ontology/datasource/index',NULL,1,0,'C','0','0','ontology:datasources:list','server','admin',NOW()),
 (2004,'分析任务',      3001,2,'analysis', 'ontology/analysis/index', NULL,1,0,'C','0','0','ontology:analyses:list','chart','admin',NOW()),
 (2005,'配置草案',      3001,3,'proposal', 'ontology/proposal/index', NULL,1,0,'C','0','0','ontology:proposals:list','form','admin',NOW()),
-(2006,'导入记录',      3001,4,'import',   'ontology/import/index',   NULL,1,0,'C','0','0','ontology:imports:list','upload','admin',NOW()),
 (2090,'模型配置',      3002,1,'settings', 'ontology/settings/index', NULL,1,0,'C','0','0','ontology:llm:list','skill','admin',NOW()),
 (2091,'MCP Token',     3002,2,'mcp',      'ontology/settings/mcp',   NULL,1,0,'C','0','0','ontology:llm:list','lock','admin',NOW());
 
@@ -840,11 +841,6 @@ INSERT IGNORE INTO sys_menu(menu_id, menu_name, parent_id, order_num, path, comp
 (2041,'草案编辑',2005,2,'','','1',0,'F','1','0','ontology:proposals:edit','', 'admin',NOW()),
 (2042,'草案删除',2005,3,'','','1',0,'F','1','0','ontology:proposals:remove','', 'admin',NOW()),
 (2074,'草案查询',2005,4,'','','1',0,'F','1','0','ontology:proposals:query','', 'admin',NOW()),
-(2043,'草案审核',2005,5,'','','1',0,'F','1','0','ontology:proposals:review','', 'admin',NOW()),
-(2050,'导入新增',2006,1,'','','1',0,'F','1','0','ontology:imports:add','', 'admin',NOW()),
-(2051,'导入编辑',2006,2,'','','1',0,'F','1','0','ontology:imports:edit','', 'admin',NOW()),
-(2052,'导入删除',2006,3,'','','1',0,'F','1','0','ontology:imports:remove','', 'admin',NOW()),
-(2075,'导入记录查询',2006,4,'','','1',0,'F','1','0','ontology:imports:query','', 'admin',NOW()),
 (2060,'空间新增',2007,1,'','','1',0,'F','1','0','ontology:spaces:add','', 'admin',NOW()),
 (2061,'空间编辑',2007,2,'','','1',0,'F','1','0','ontology:spaces:edit','', 'admin',NOW()),
 (2062,'空间删除',2007,3,'','','1',0,'F','1','0','ontology:spaces:remove','', 'admin',NOW()),

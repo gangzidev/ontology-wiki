@@ -31,6 +31,8 @@ router.beforeEach((to, from, next) => {
         // 判断当前用户是否已拉取完user_info信息
         store.dispatch('GetInfo').then(() => {
           isRelogin.show = false
+          // 拉取模型配置状态，供首页前置依赖提示与各动作入口禁用判断使用
+          store.dispatch('model/fetchStatus').catch(() => {})
           store.dispatch('GenerateRoutes').then(accessRoutes => {
             // 根据roles权限生成可访问的路由表
             router.addRoutes(accessRoutes) // 动态添加可访问路由表

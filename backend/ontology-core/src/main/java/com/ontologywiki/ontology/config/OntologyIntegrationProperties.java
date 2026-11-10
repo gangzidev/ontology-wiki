@@ -90,7 +90,6 @@ public class OntologyIntegrationProperties {
         private String baseUrl;
         private String token;
         private String importPath;
-        private String testPath;
         private int connectTimeoutMs = 10000;
         private int readTimeoutMs = 120000;
         public boolean isEnabled() { return enabled; }
@@ -101,8 +100,6 @@ public class OntologyIntegrationProperties {
         public void setToken(String token) { this.token = token; }
         public String getImportPath() { return importPath; }
         public void setImportPath(String importPath) { this.importPath = importPath; }
-        public String getTestPath() { return testPath; }
-        public void setTestPath(String testPath) { this.testPath = testPath; }
         public int getConnectTimeoutMs() { return connectTimeoutMs; }
         public void setConnectTimeoutMs(int connectTimeoutMs) { this.connectTimeoutMs = connectTimeoutMs; }
         public int getReadTimeoutMs() { return readTimeoutMs; }

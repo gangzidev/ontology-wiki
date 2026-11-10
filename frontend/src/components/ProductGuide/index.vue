@@ -83,7 +83,7 @@ export default {
         {
           shortTitle: '审核',
           title: '审核配置草案，再测试和导入',
-          description: '到“配置草案”查看分析结果和依据，审核通过后可导出或提交到本体平台；可在“导入记录”查看结果。',
+          description: '到“配置草案”查看分析结果和依据，由本体工程师修正并标记完成后即可导出或提交到本体平台。',
           tip: '建议先完成审核与平台测试，再进行正式导入。',
           icon: 'el-icon-document-checked'
         },

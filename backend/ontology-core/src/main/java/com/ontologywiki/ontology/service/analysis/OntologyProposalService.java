@@ -19,11 +19,10 @@ import java.util.*;
  *
  * <p>职责：
  * <ul>
- *   <li>草案审核：只允许「待审核」流转到通过 / 驳回；</li>
+ *   <li>草案完成：记录本体工程师修正完成；</li>
  *   <li>草案导入：调用本体平台导入接口，并记录导入结果；</li>
  *   <li>草案导出：RDF/OWL 或工程包；</li>
  *   <li>版本对比：与同任务上一版逐类比较差异；</li>
- *   <li>沙箱测试：调用平台测试接口并记录回执。</li>
  * </ul>
  *
  * <p>SQL 已下沉至 {@link OntologyAnalysisMapper}，本类只保留外部调用与结果整形。
@@ -35,13 +34,11 @@ public class OntologyProposalService {
 
     /** 草案状态 */
     private static final String STATUS_DRAFT = "DRAFT";
-    private static final String STATUS_APPROVED = "APPROVED";
-    private static final String STATUS_REJECTED = "REJECTED";
+    private static final String STATUS_COMPLETED = "COMPLETED";
     private static final String STATUS_IMPORTED = "IMPORTED";
 
     /** 导入记录的目标系统标识 */
     private static final String TARGET_PLATFORM = "本体平台";
-    private static final String TARGET_SANDBOX = "本体平台沙箱";
 
     /** 单次对比最多输出的变更条数 */
     private static final int MAX_DIFF_ITEMS = 500;
@@ -69,30 +66,20 @@ public class OntologyProposalService {
     }
 
     /**
-     * 审核草案。
+     * 标记草案已由本体工程师修正完成。
      *
      * @param proposalId 草案主键
-     * @param decision   审核结论（APPROVED / REJECTED）
-     * @param comment    审核意见，驳回时必填
      * @return 提示信息
      * @throws IllegalArgumentException 入参非法时抛出
      * @throws IllegalStateException    草案不存在或已处理时抛出
      */
-    public String review(long proposalId, String decision, String comment) {
-        String normalizedDecision = decision == null ? "" : decision.trim().toUpperCase(Locale.ROOT);
-        String normalizedComment = comment == null ? "" : comment.trim();
-        if (!STATUS_APPROVED.equals(normalizedDecision) && !STATUS_REJECTED.equals(normalizedDecision)) {
-            throw new IllegalArgumentException("请选择审核通过或驳回");
-        }
-        if (STATUS_REJECTED.equals(normalizedDecision) && normalizedComment.isEmpty()) {
-            throw new IllegalArgumentException("驳回时请填写审核意见");
-        }
-        int updated = mapper.reviewProposal(proposalId, normalizedDecision,
-                clip(normalizedComment, 1000), SecurityUtils.getUsername(), STATUS_DRAFT);
+    public String complete(long proposalId) {
+        int updated = mapper.completeProposal(proposalId, STATUS_COMPLETED,
+                "", SecurityUtils.getUsername(), STATUS_DRAFT);
         if (updated == 0) {
             throw new IllegalStateException("草案不存在或已处理，请刷新列表");
         }
-        return "审核记录已保存";
+        return "草案已完成";
     }
 
     /**
@@ -100,7 +87,7 @@ public class OntologyProposalService {
      *
      * @param proposalId 草案主键
      * @return 平台响应体
-     * @throws IllegalArgumentException 平台未配置或草案未审核通过时抛出
+     * @throws IllegalArgumentException 平台未配置或草案未完成时抛出
      * @throws IllegalStateException    平台调用失败时抛出
      */
     public String importToPlatform(long proposalId) {
@@ -112,8 +99,8 @@ public class OntologyProposalService {
         if (proposal == null) {
             throw new IllegalArgumentException("配置草案不存在");
         }
-        if (!STATUS_APPROVED.equalsIgnoreCase(String.valueOf(proposal.get("status")))) {
-            throw new IllegalArgumentException("只有审核通过的草案才能导入");
+        if (!STATUS_COMPLETED.equalsIgnoreCase(String.valueOf(proposal.get("status")))) {
+            throw new IllegalArgumentException("只有草案完成后才能导入");
         }
         String username = SecurityUtils.getUsername();
         try {
@@ -234,59 +221,6 @@ public class OntologyProposalService {
         }
     }
 
-    /**
-     * 沙箱测试草案。
-     *
-     * @param proposalId 草案主键
-     * @return 回执编号、状态与明细
-     * @throws IllegalArgumentException 测试地址未配置或草案不存在时抛出
-     */
-    public Map<String, Object> sandboxTest(long proposalId) {
-        OntologyIntegrationProperties.Platform platform = integration.getPlatform();
-        if (isBlank(platform.getBaseUrl()) || isBlank(platform.getTestPath())) {
-            throw new IllegalArgumentException("本体平台沙箱测试地址未配置");
-        }
-        List<Map<String, Object>> rows = mapper.selectProposalNameAndConfig(proposalId);
-        if (rows.isEmpty()) {
-            throw new IllegalArgumentException("配置草案不存在");
-        }
-        String status = "FAILED";
-        String detail;
-        try {
-            Map<String, Object> config = json.readValue(String.valueOf(rows.get(0).get("config_json")),
-                    new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() { });
-            Object targetConfig = config.containsKey("targetConfig") ? config.get("targetConfig") : config;
-            Map<String, Object> payload = new LinkedHashMap<>();
-            payload.put("mode", "SANDBOX_TEST");
-            payload.put("proposalId", proposalId);
-            payload.put("proposalName", rows.get(0).get("proposal_name"));
-            payload.put("targetConfig", targetConfig);
-            ResponseEntity<String> response = rest.exchange(platform.getBaseUrl() + platform.getTestPath(),
-                    HttpMethod.POST, new HttpEntity<>(payload, buildPlatformHeaders(platform)), String.class);
-            status = sandboxReceiptStatus(response.getBody());
-            detail = "HTTP " + response.getStatusCodeValue() + "\n" + value(response.getBody());
-        } catch (Exception e) {
-            detail = "沙箱请求失败，请检查测试接口契约和服务状态";
-        }
-        String receiptDetail = clip(detail, 2000);
-
-        // 回执必须先落库再返回编号，保证前端拿到的编号可追溯
-        Map<String, Object> params = new LinkedHashMap<>();
-        params.put("proposalId", proposalId);
-        params.put("targetSystem", TARGET_SANDBOX);
-        params.put("status", status);
-        params.put("detail", receiptDetail);
-        params.put("username", SecurityUtils.getUsername());
-        params.put("generatedId", null);
-        mapper.insertImportRecordWithKey(params);
-
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("receiptId", params.get("generatedId"));
-        result.put("status", status);
-        result.put("detail", receiptDetail);
-        return result;
-    }
-
     // ==================== 内部方法 ====================
 
     /** 构造调用本体平台所需的请求头。 */
@@ -297,20 +231,6 @@ public class OntologyProposalService {
             headers.setBearerAuth(platform.getToken());
         }
         return headers;
-    }
-
-    /** 解析沙箱回执中的状态，无法识别时归为待定。 */
-    private String sandboxReceiptStatus(String body) {
-        try {
-            JsonNode root = json.readTree(body == null ? "{}" : body);
-            if (root.path("passed").asBoolean(false) || root.path("success").asBoolean(false)) return "SUCCESS";
-            String state = root.path("status").asText(root.path("result").asText("")).trim().toUpperCase(Locale.ROOT);
-            if (Arrays.asList("PASS", "PASSED", "SUCCESS", "OK").contains(state)) return "SUCCESS";
-            if (Arrays.asList("FAIL", "FAILED", "ERROR", "REJECTED").contains(state)) return "FAILED";
-            return "PENDING";
-        } catch (Exception e) {
-            return "PENDING";
-        }
     }
 
     /** 按身份键把两侧列表转成 Map，便于逐条比较。 */

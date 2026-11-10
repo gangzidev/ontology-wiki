@@ -115,7 +115,6 @@ ontology:
       token: ${ONTOLOGY_PLATFORM_TOKEN:}
       import-path: ${ONTOLOGY_PLATFORM_IMPORT_PATH:}
       # 仅设置指向专用测试环境的地址；接口契约须由目标平台提供。
-      test-path: ${ONTOLOGY_PLATFORM_TEST_PATH:}
 
 # token配置
 token:

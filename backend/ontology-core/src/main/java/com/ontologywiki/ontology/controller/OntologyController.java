@@ -75,14 +75,14 @@ public class OntologyController extends BaseController {
     private final OntologyResourceService resourceService;
     /** 资产图谱与问答所需的数据访问 */
     private final WikiAssetMapper assetMapper;
-    /** 分析任务、草案、数据源与导入记录的数据访问 */
+    /** 分析任务、草案与数据源的数据访问 */
     private final OntologyAnalysisMapper analysisMapper;
     /** 问答会话与消息数据访问 */
     private final WikiChatMapper chatMapper;
     /** 模型配置与 MCP 令牌数据访问 */
     private final LlmSettingsMapper llmSettingsMapper;
     private final McpMapper mcpMapper;
-    /** 草案审核、导入、导出、对比、沙箱测试 */
+    /** 草案完成标记、导入、导出与版本对比 */
     private final OntologyProposalService proposalService;
     private final ObjectMapper json = new ObjectMapper();
     @Autowired
@@ -240,13 +240,11 @@ public class OntologyController extends BaseController {
         }
     }
 
-    @PreAuthorize("@ss.hasPermi('ontology:proposals:review')")
-    @PostMapping("/proposals/{id}/review")
-    public AjaxResult reviewProposal(@PathVariable("id") long id, @RequestBody(required=false) Map<String,String> body) {
+    @PreAuthorize("@ss.hasPermi('ontology:proposals:edit')")
+    @PostMapping("/proposals/{id}/complete")
+    public AjaxResult completeProposal(@PathVariable("id") long id) {
         try {
-            return AjaxResult.success(proposalService.review(id,
-                    body == null ? null : body.get("decision"),
-                    body == null ? null : body.get("comment")));
+            return AjaxResult.success(proposalService.complete(id));
         } catch (IllegalArgumentException | IllegalStateException e) {
             return AjaxResult.error(e.getMessage());
         }
@@ -348,17 +346,6 @@ public class OntologyController extends BaseController {
     }
 
     private String value(Object value) { return value == null ? "" : String.valueOf(value); }
-
-    @PreAuthorize("@ss.hasPermi('ontology:proposals:edit')")
-    @Log(title = "本体配置草案沙箱测试", businessType = BusinessType.OTHER, isSaveRequestData = false, isSaveResponseData = false)
-    @PostMapping("/proposals/{id}/sandbox-test")
-    public AjaxResult sandboxTestProposal(@PathVariable("id") long id) {
-        try {
-            return AjaxResult.success(proposalService.sandboxTest(id));
-        } catch (IllegalArgumentException e) {
-            return AjaxResult.error(e.getMessage());
-        }
-    }
 
     /**
      * 未配置任何可用大模型时返回的专用业务码。
@@ -620,7 +607,9 @@ public class OntologyController extends BaseController {
             if (analysisMapper.countProposalOfTask(proposalId, scopeId) == 0) return AjaxResult.error("所选配置草案不属于当前分析任务");
         }
         if (spaceId != null && chatMapper.countEnabledSpace(spaceId, STATUS_ACTIVE) == 0) return AjaxResult.error("关联 Wiki 空间不存在或已停用");
-        if (!llmWiki.enabled() && !"ALL".equals(scopeType)) return modelNotConfigured();
+        // 内置模型未启用时，只有「全部资料」范围且外部智文服务配置齐全才允许回退；
+        // 两者都不可用必须返回 603，否则前端只会收到笼统的「请求失败」，无法引导用户去配置模型
+        if (!llmWiki.enabled() && !("ALL".equals(scopeType) && zhiwenConfigured())) return modelNotConfigured();
         String username = SecurityUtils.getUsername();
         List<Map<String,Object>> sessionRows = chatMapper.selectSession(sessionId, username);
         Map<String,Object> contextState = Collections.emptyMap();
@@ -707,24 +696,6 @@ public class OntologyController extends BaseController {
     @GetMapping("/wiki/status")
     public AjaxResult wikiStatus() {
         return AjaxResult.success(llmWiki.health());
-    }
-
-    @PreAuthorize("@ss.hasPermi('ontology:wiki:settings')")
-    @GetMapping("/wiki/settings")
-    public AjaxResult modelSettings() { return AjaxResult.success(llmWiki.modelSettings()); }
-
-    @PreAuthorize("@ss.hasPermi('ontology:wiki:settings')")
-    @PutMapping("/wiki/settings")
-    public AjaxResult saveModelSettings(@RequestBody(required=false) Map<String,Object> body) {
-        try { return AjaxResult.success(llmWiki.saveModelSettings(body, SecurityUtils.getUsername())); }
-        catch (Exception e) { return AjaxResult.error(e.getMessage() == null ? "模型设置保存失败" : e.getMessage()); }
-    }
-
-    @PreAuthorize("@ss.hasPermi('ontology:wiki:settings')")
-    @PostMapping("/wiki/settings/test")
-    public AjaxResult testModelSettings() {
-        try { return AjaxResult.success(llmWiki.testModelSettings()); }
-        catch (Exception e) { return AjaxResult.error(e.getMessage() == null ? "模型 API 调用失败" : e.getMessage()); }
     }
 
     // ─── 多源模型配置管理 ───────────────────────────────────────────────────────
@@ -976,6 +947,15 @@ public class OntologyController extends BaseController {
     @PreAuthorize("@ss.hasPermi('ontology:assets:query')")
     @GetMapping("/wiki/files/content")
     public AjaxResult wikiFileContent(@RequestParam("path") String path) { try { return AjaxResult.success(llmWiki.fileContent(path)); } catch (Exception e) { return AjaxResult.error(e.getMessage()); } }
+
+    /** 外部智文服务是否可用：开关打开且地址、HMAC 凭据齐全 */
+    private boolean zhiwenConfigured() {
+        OntologyIntegrationProperties.Zhiwen z = integration.getZhiwen();
+        return z.isEnabled()
+                && z.getBaseUrl() != null && !z.getBaseUrl().trim().isEmpty()
+                && z.getSecretId() != null && !z.getSecretId().trim().isEmpty()
+                && z.getSecretKey() != null && !z.getSecretKey().trim().isEmpty();
+    }
 
     private String askZhiwen(String question, String priorSession) {
         OntologyIntegrationProperties.Zhiwen zhiwen = integration.getZhiwen();

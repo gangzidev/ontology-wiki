@@ -14,7 +14,7 @@ import java.util.Map;
 /**
  * 本体 Wiki 通用资源服务。
  *
- * <p>承担六类资源（空间、资产、数据源、分析任务、配置草案、导入记录）的通用增删改查业务规则：
+ * <p>承担五类资源（空间、资产、数据源、分析任务、配置草案）的通用增删改查业务规则：
  * 字段白名单收口、必填校验、行业空间归属校验、草案状态保护、数据源密码加密与 JDBC 地址校验。
  *
  * <p>SQL 已全部下沉到 {@link OntologyResourceRepository} 与对应 Mapper XML，
@@ -147,7 +147,7 @@ public class OntologyResourceService {
         requireRequired(resource, data);
         requireIndustrySpace(resourceKey, data, id);
 
-        // 草案的业务内容或类型发生变化时，必须清空审核结论，回到待审核
+        // 草案内容或类型变化后，需要重新由工程师修正并标记完成
         boolean resetProposalReview = shouldResetProposalReview(resourceKey, id, data);
         String username = com.ontologywiki.common.utils.SecurityUtils.getUsername();
         data.put("update_by", username);

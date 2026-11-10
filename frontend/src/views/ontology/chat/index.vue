@@ -288,6 +288,13 @@
           </div>
         </div>
 
+        <!-- 能力边界提示条：首次显示，用户可关闭，仅非分析模式显示 -->
+        <div v-if="showRetrievalTip && scopeType !== SCOPE_TYPE.ANALYSIS" class="retrieval-tip-bar">
+          <i class="el-icon-info" />
+          <span>当前基于关键词检索，请尽量使用资料中的原词；同义词或近义词可能无法关联。复杂语义问题建议先把资料「整理为 Wiki 页面」再提问。</span>
+          <button type="button" class="tip-close-btn" aria-label="关闭提示" @click="closeRetrievalTip"><i class="el-icon-close" /></button>
+        </div>
+
         <!-- 消息列表（气泡样式） -->
         <div ref="messages" class="messages">
           <div
@@ -505,6 +512,7 @@ export default {
       sourcePreviewOpen: false,
       sourcePreview: {},
       sessions: [],
+      showRetrievalTip: localStorage.getItem('ontologywiki:retrieval-tip:v1') !== 'closed',
 
       // ── 分割线拖拽 ───────────────────────────────
       structureWidth: 480,   // 分析结构栏初始宽度（px），可被用户拖拽修改
@@ -685,8 +693,19 @@ export default {
     /** el-dropdown command：主类型切换（面包屑第一级） */
     onScopeTypeCommand(key) {
       if (key === this.scopeType) return
-      this.scopeType = key
-      this.changeScopeType()
+      if (this.messages.length > 0) {
+        this.$confirm('切换范围将开始新会话，当前会话已保留在历史记录中，可随时恢复。', '切换问答范围', {
+          confirmButtonText: '确认切换',
+          cancelButtonText: '取消',
+          type: 'info'
+        }).then(() => {
+          this.scopeType = key
+          this.changeScopeType()
+        }).catch(() => {})
+      } else {
+        this.scopeType = key
+        this.changeScopeType()
+      }
     },
 
     /** el-dropdown command：行业空间切换（SPACE 模式） */
@@ -1268,6 +1287,12 @@ export default {
     /** 格式化时间：截取到分钟 */
     formatTime(value) {
       return value ? String(value).replace('T', ' ').slice(0, 16) : ''
+    },
+
+    /** 关闭检索能力边界提示条，localStorage 记忆 */
+    closeRetrievalTip() {
+      this.showRetrievalTip = false
+      localStorage.setItem('ontologywiki:retrieval-tip:v1', 'closed')
     },
 
     /** 历史会话的范围显示文字 */
@@ -2043,6 +2068,12 @@ export default {
 .scope-dropdown-popper[x-placement^="bottom"] .popper__arrow {
   display: none;
 }
+/* 检索能力边界提示条 */
+.retrieval-tip-bar { display:flex; align-items:flex-start; gap:10px; padding:10px 14px; margin:0 0 10px; border-radius:8px; background:#f0f9ff; border:1px solid #bae6fd; color:#0369a1; font-size:13px; line-height:1.6; }
+.retrieval-tip-bar i.el-icon-info { flex-shrink:0; margin-top:2px; font-size:15px; }
+.retrieval-tip-bar span { flex:1; }
+.tip-close-btn { flex-shrink:0; background:none; border:none; cursor:pointer; color:#64748b; padding:0 2px; font-size:14px; line-height:1; }
+.tip-close-btn:hover { color:#0369a1; }
 </style>
 
 

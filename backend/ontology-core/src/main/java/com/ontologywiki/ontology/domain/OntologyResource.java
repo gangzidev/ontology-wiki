@@ -10,7 +10,7 @@ import java.util.Set;
 /**
  * 本体 Wiki 通用资源定义。
  *
- * <p>空间、资产、数据源、分析任务、配置草案、导入记录六类资源的表结构形态一致，
+ * <p>空间、资产、数据源、分析任务、配置草案五类资源的表结构形态一致，
  * 因此把「表名、主键、可写列、必填列、可搜索列」集中在此描述，避免散落在 SQL 与分支判断中。
  *
  * <p>所有字段都来自服务端白名单，不接受前端传入，所以下游使用它拼接 SQL 是安全的。
@@ -41,10 +41,6 @@ public final class OntologyResource {
                 "proposals", "ontology_proposal", "proposal_id",
                 "proposal_name,proposal_type,task_id,config_json,status,create_by",
                 "proposal_name,proposal_type"));
-        register(new OntologyResource(
-                "imports", "ontology_import_record", "import_id",
-                "proposal_id,target_system,status,detail,create_by",
-                "target_system"));
     }
 
     /** 资源名，对应接口路径片段 */
@@ -99,7 +95,7 @@ public final class OntologyResource {
     }
 
     /**
-     * 拼接列表查询所需的完整列集合：主键、业务列、草案审核列与审计列。
+     * 拼接列表查询所需的完整列集合：主键、业务列、草案完成记录与审计列。
      *
      * @return 逗号分隔的列名
      */

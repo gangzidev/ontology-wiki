@@ -7,7 +7,6 @@ const menuIconMap = {
   '数据源管理': 'el-icon-coin',
   '分析任务': 'el-icon-data-analysis',
   '配置草案': 'el-icon-document-checked',
-  '导入记录': 'el-icon-upload2',
   'Wiki空间': 'el-icon-folder-opened',
   '行业知识空间': 'el-icon-folder-opened',
   '业务知识问答': 'el-icon-chat-line-round'

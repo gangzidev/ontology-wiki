@@ -9,12 +9,12 @@ import java.util.Map;
 /**
  * 本体分析链路数据访问（Controller 层使用）。
  *
- * <p>覆盖分析任务、配置草案、数据源与导入记录：
+ * <p>覆盖分析任务、配置草案、数据源及导入记录写入：
  * <ul>
  *   <li>分析任务：读取、状态流转、进度回写；</li>
- *   <li>配置草案：审核、导出、版本对比、沙箱测试、上下文读取；</li>
+ *   <li>配置草案：完成标记、导出、版本对比与上下文读取；</li>
  *   <li>数据源：读取与凭证回写；</li>
- *   <li>导入记录：写入与获取自增主键。</li>
+ *   <li>导入记录：保存本体平台导入结果。</li>
  * </ul>
  */
 @Mapper
@@ -110,17 +110,8 @@ public interface OntologyAnalysisMapper {
 
     // ==================== 配置草案 ====================
 
-    /**
-     * 审核草案：仅待审核状态可流转。
-     *
-     * @param proposalId 草案主键
-     * @param status     审核结论
-     * @param comment    审核意见
-     * @param username   操作人
-     * @param draft      待审核状态值
-     * @return 影响行数
-     */
-    int reviewProposal(@Param("proposalId") Long proposalId,
+    /** 草案仅可从待修正状态标记为完成。 */
+    int completeProposal(@Param("proposalId") Long proposalId,
                        @Param("status") String status,
                        @Param("comment") String comment,
                        @Param("username") String username,
@@ -159,14 +150,6 @@ public interface OntologyAnalysisMapper {
      */
     List<Map<String, Object>> selectPreviousProposal(@Param("taskId") Long taskId,
                                                      @Param("proposalId") Long proposalId);
-
-    /**
-     * 读取草案名称与配置，用于沙箱测试。
-     *
-     * @param proposalId 草案主键
-     * @return 草案信息
-     */
-    List<Map<String, Object>> selectProposalNameAndConfig(@Param("proposalId") Long proposalId);
 
     /**
      * 读取任务最新一版草案主键。
@@ -257,11 +240,4 @@ public interface OntologyAnalysisMapper {
                            @Param("detail") String detail,
                            @Param("username") String username);
 
-    /**
-     * 新增导入记录并回填自增主键。
-     *
-     * @param params 参数集合：proposalId、targetSystem、status、detail、username、generatedId（输出）
-     * @return 影响行数
-     */
-    int insertImportRecordWithKey(Map<String, Object> params);
 }
