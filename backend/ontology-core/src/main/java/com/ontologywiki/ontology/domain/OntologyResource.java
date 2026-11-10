@@ -62,8 +62,8 @@ public final class OntologyResource {
         this.idColumn = idColumn;
         this.columns = columns;
         this.required = required;
-        // 搜索列由可写列转换而来：把 "a,b,c" 变成 "a b c"，配合 concat_ws 使用
-        this.searchColumns = String.join(" ", columns.split(","));
+        // 搜索列由可写列转换而来：把 "a,b,c" 变成 "a, b, c"，配合 concat_ws 使用
+        this.searchColumns = String.join(", ", columns.split(","));
     }
 
     private static void register(OntologyResource resource) {

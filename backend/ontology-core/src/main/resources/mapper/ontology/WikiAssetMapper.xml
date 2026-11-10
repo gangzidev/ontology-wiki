@@ -245,7 +245,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         FROM wiki_asset a
         JOIN ontology_analysis_memory m
           ON a.tags = CONCAT('ANALYSIS_MEMORY:', m.memory_id)
-        WHERE a.status = #{status} AND a.asset_type = #{assetType}
+        WHERE a.status = #{status} AND a.asset_type = #{pageType}
         <if test="spaceId != null">
             AND a.space_id = #{spaceId}
         </if>

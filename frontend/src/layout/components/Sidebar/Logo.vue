@@ -3,7 +3,7 @@
     <transition name="sidebarLogoFade">
       <router-link to="/" class="sidebar-logo-link">
         <span class="brand-symbol" aria-hidden="true">
-          <img src="/favicon.svg" class="brand-mark" alt="">
+          <img src="/transparent_logo.ico" class="brand-mark" alt="">
         </span>
         <div v-if="!collapse" class="brand-copy">
           <strong class="sidebar-title">本体 Wiki</strong>
