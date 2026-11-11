@@ -49,7 +49,7 @@
     <!-- ============================================================
          移动端工作区切换 Tab（仅窄屏显示）
     ============================================================ -->
-    <div v-if="scopeType === SCOPE_TYPE.ANALYSIS" class="mobile-tabs" role="tablist" aria-label="分析问答工作区">
+    <div v-if="scopeType === SCOPE_TYPE.ANALYSIS && scopeId" class="mobile-tabs" role="tablist" aria-label="分析问答工作区">
       <button type="button" :class="{ active: mobilePanel === 'structure' }" @click="mobilePanel = 'structure'">
         分析结构
       </button>
@@ -61,11 +61,81 @@
     <!-- ============================================================
          主工作区：分析结构面板 + 对话面板
     ============================================================ -->
-    <main ref="workspaceShell" :class="['workspace', { 'has-structure': scopeType === SCOPE_TYPE.ANALYSIS }]">
+    <main ref="workspaceShell" :class="['workspace', { 'has-structure': scopeType === SCOPE_TYPE.ANALYSIS && scopeId, 'has-scope': scopeType !== SCOPE_TYPE.ANALYSIS || !scopeId }]">
+
+      <!-- ── 左栏：知识范围（普通问答模式） ── -->
+      <aside v-if="scopeType !== SCOPE_TYPE.ANALYSIS || !scopeId" class="scope-panel">
+        <div class="scope-panel-heading">
+          <div>
+            <span class="scope-panel-kicker">CONTEXT</span>
+            <strong>问答范围</strong>
+            <p>先选定知识边界，再开始提问</p>
+          </div>
+          <i class="el-icon-s-operation scope-panel-heading-icon" />
+        </div>
+
+        <div class="scope-nav" role="list" aria-label="问答范围">
+          <button
+            v-for="(cfg, key) in SCOPE_TYPE_CONFIG"
+            :key="key"
+            type="button"
+            :class="['scope-nav-item', { active: scopeType === key }]"
+            @click="onScopeTypeCommand(key)"
+          >
+            <span class="scope-nav-icon"><i :class="cfg.icon" /></span>
+            <span class="scope-nav-copy">
+              <strong>{{ cfg.label }}</strong>
+              <small>{{ key === SCOPE_TYPE.ALL ? '跨行业检索全部资料' : cfg.hint }}</small>
+            </span>
+            <i v-if="scopeType === key" class="el-icon-check scope-nav-check" />
+            <i v-else class="el-icon-arrow-right scope-nav-arrow" />
+          </button>
+        </div>
+
+        <div class="scope-target-card">
+          <div class="scope-target-heading">
+            <span>{{ scopeType === SCOPE_TYPE.SPACE ? '选择行业空间' : scopeType === SCOPE_TYPE.ASSET ? '选择 Wiki 资产' : '分析任务' }}</span>
+            <small v-if="scopeType === SCOPE_TYPE.ALL">不限范围</small>
+            <small v-else-if="scopeReady">已选定</small>
+            <small v-else>待选择</small>
+          </div>
+
+          <div v-if="scopeType === SCOPE_TYPE.ALL" class="scope-all-state">
+            <span class="scope-all-orb"><i class="el-icon-files" /></span>
+            <p>当前会搜索所有已整理的 Wiki 资料。</p>
+            <small>适合先探索业务全貌</small>
+          </div>
+
+          <div v-else-if="scopeType === SCOPE_TYPE.SPACE" class="scope-target-list">
+            <button v-for="item in spaces" :key="item.space_id" type="button" :class="['scope-target-item', { active: String(item.space_id) === scopeId }]" @click="onSpaceCommand(String(item.space_id))">
+              <i class="el-icon-folder-opened" />
+              <span>{{ item.space_name }}</span>
+              <i v-if="String(item.space_id) === scopeId" class="el-icon-check" />
+            </button>
+            <span v-if="!spaces.length" class="scope-target-empty">暂无可用行业空间</span>
+          </div>
+
+          <div v-else class="scope-target-list">
+            <el-input v-model="scopeSearchKeyword" size="small" prefix-icon="el-icon-search" :placeholder="scopeType === SCOPE_TYPE.ANALYSIS ? '搜索分析任务' : '搜索 Wiki 资产'" clearable @input="onScopeSearch" />
+            <div v-if="scopeOptionsLoading" class="scope-target-empty"><i class="el-icon-loading" /> 加载中…</div>
+            <button v-for="item in scopeOptions" v-else :key="scopeOptionKey(item)" type="button" :class="['scope-target-item', { active: String(scopeOptionKey(item)) === scopeId }]" @click="selectScopeOption(item)">
+              <i :class="scopeType === SCOPE_TYPE.ANALYSIS ? 'el-icon-data-analysis' : 'el-icon-document'" />
+              <span>{{ scopeOptionLabel(item) }}</span>
+              <i v-if="String(scopeOptionKey(item)) === scopeId" class="el-icon-check" />
+            </button>
+            <span v-if="!scopeOptionsLoading && !scopeOptions.length" class="scope-target-empty">{{ scopeType === SCOPE_TYPE.ANALYSIS ? '还没有分析结果' : '没有匹配的 Wiki 资产' }}</span>
+          </div>
+        </div>
+
+        <button v-if="scopeType === SCOPE_TYPE.ALL || (scopeType === SCOPE_TYPE.ANALYSIS && !scopeId)" type="button" class="scope-create-link" @click="goAnalysis">
+          <i class="el-icon-plus" /> {{ scopeType === SCOPE_TYPE.ANALYSIS ? '去创建分析任务' : '创建一次本体分析' }}
+          <i class="el-icon-arrow-right" />
+        </button>
+      </aside>
 
       <!-- ── 左栏：分析结构（仅 ANALYSIS 模式显示） ── -->
       <section
-        v-if="scopeType === SCOPE_TYPE.ANALYSIS"
+        v-if="scopeType === SCOPE_TYPE.ANALYSIS && scopeId"
         ref="structureColumn"
         :class="['structure-panel', { 'mobile-hidden': mobilePanel !== 'structure' }]"
         :style="{ flexBasis: structureWidth + 'px', flexGrow: 0, flexShrink: 0 }"
@@ -204,7 +274,7 @@
 
       <!-- ── 可拖拽分割线（仅 ANALYSIS 模式） ── -->
       <div
-        v-if="scopeType === SCOPE_TYPE.ANALYSIS"
+        v-if="scopeType === SCOPE_TYPE.ANALYSIS && scopeId"
         class="resize-handle"
         title="拖拽调整宽度"
         @mousedown="onResizeStart"
@@ -730,6 +800,7 @@ export default {
       this.selectedAnalysisField = null
       this.mobilePanel = 'assistant'
       this.newChat()
+      if (DYNAMIC_SCOPE_TYPES.includes(this.scopeType)) this.searchScopeOptions('')
     },
 
     /** 切换目标（空间 / 资产 / 分析任务） */
@@ -1523,6 +1594,189 @@ export default {
   border-radius: var(--r-panel);
   background: var(--c-bg);
 }
+.scope-panel {
+  display: flex;
+  flex: 0 0 264px;
+  flex-direction: column;
+  min-width: 0;
+  padding: 20px 14px 14px;
+  overflow-y: auto;
+  background: #fbfcfe;
+  border-right: 1px solid var(--c-border);
+}
+.scope-panel-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 4px 14px;
+}
+.scope-panel-kicker {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--c-primary);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .14em;
+}
+.scope-panel-heading strong {
+  display: block;
+  color: var(--c-text);
+  font-size: 16px;
+  font-weight: 700;
+}
+.scope-panel-heading p {
+  margin: 4px 0 0;
+  color: var(--c-text-hint);
+  font-size: 11px;
+}
+.scope-panel-heading-icon {
+  padding-top: 12px;
+  color: #a8b7c9;
+  font-size: 17px;
+}
+.scope-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.scope-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 54px;
+  padding: 8px 9px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--c-text-secondary);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .15s, background .15s, transform .15s;
+}
+.scope-nav-item:hover {
+  border-color: #d7e7ff;
+  background: #f4f8ff;
+  transform: translateX(2px);
+}
+.scope-nav-item.active {
+  border-color: #cfe2ff;
+  background: var(--c-primary-light);
+  color: var(--c-primary);
+  box-shadow: 0 3px 10px rgba(37, 99, 235, .07);
+}
+.scope-nav-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border-radius: 8px;
+  background: #eef2f7;
+  color: #71829a;
+  font-size: 15px;
+}
+.scope-nav-item.active .scope-nav-icon {
+  background: #dbeafe;
+  color: var(--c-primary);
+}
+.scope-nav-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+}
+.scope-nav-copy strong {
+  color: inherit;
+  font-size: 12px;
+  font-weight: 600;
+}
+.scope-nav-copy small {
+  overflow: hidden;
+  margin-top: 3px;
+  color: #91a0b1;
+  font-size: 10px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scope-nav-check { color: var(--c-primary); font-size: 13px; }
+.scope-nav-arrow { color: #b3bfcc; font-size: 11px; }
+.scope-target-card {
+  margin-top: 14px;
+  padding: 12px 10px 10px;
+  border: 1px solid var(--c-border);
+  border-radius: 10px;
+  background: #fff;
+}
+.scope-target-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+  color: var(--c-text);
+  font-size: 11px;
+  font-weight: 600;
+}
+.scope-target-heading small { color: var(--c-text-hint); font-size: 10px; font-weight: 400; }
+.scope-all-state { padding: 8px 2px 4px; text-align: center; }
+.scope-all-orb {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #eff6ff;
+  color: var(--c-primary);
+  font-size: 17px;
+}
+.scope-all-state p { margin: 8px 0 3px; color: var(--c-text-secondary); font-size: 11px; line-height: 1.5; }
+.scope-all-state small { color: var(--c-text-hint); font-size: 10px; }
+.scope-target-list { display: flex; flex-direction: column; gap: 4px; max-height: 250px; overflow-y: auto; }
+.scope-target-list > .el-input { margin-bottom: 3px; }
+.scope-target-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--c-text-secondary);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+.scope-target-item:hover { background: var(--c-surface); color: var(--c-text); }
+.scope-target-item.active { border-color: #d7e7ff; background: var(--c-primary-light); color: var(--c-primary); }
+.scope-target-item > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scope-target-item > i:first-child { color: #8b9aae; font-size: 13px; }
+.scope-target-item.active > i:first-child, .scope-target-item > .el-icon-check { color: var(--c-primary); }
+.scope-target-empty { padding: 16px 4px 12px; color: var(--c-text-hint); font-size: 11px; text-align: center; }
+.scope-create-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: auto;
+  padding: 11px 8px 3px;
+  border: 0;
+  background: transparent;
+  color: var(--c-primary);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+.scope-create-link .el-icon-arrow-right { margin-left: auto; font-size: 10px; }
+.scope-create-link:hover { color: var(--c-primary-hover); }
+.workspace.has-scope .conversation-panel { border-left: 0; }
+.workspace.has-scope .inline-scope { display: none; }
 .structure-panel, .conversation-panel {
   min-width: 0;
   min-height: 0;
@@ -2075,7 +2329,3 @@ export default {
 .tip-close-btn { flex-shrink:0; background:none; border:none; cursor:pointer; color:#64748b; padding:0 2px; font-size:14px; line-height:1; }
 .tip-close-btn:hover { color:#0369a1; }
 </style>
-
-
-
-
