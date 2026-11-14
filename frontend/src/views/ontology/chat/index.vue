@@ -20,9 +20,17 @@
       <!-- 右：操作按钮 -->
       <div class="header-actions">
         <template v-if="scopeType === SCOPE_TYPE.ANALYSIS">
-          <el-tag v-if="analysisChanges.length" class="save-badge" size="small" type="warning">
-            {{ analysisChanges.length }} 项待保存
-          </el-tag>
+          <el-popover v-if="analysisChanges.length" placement="bottom-end" width="380" trigger="hover" popper-class="analysis-diff-popover">
+            <div class="analysis-diff-popover-content">
+              <div class="analysis-diff-heading"><strong>待确认差异</strong><el-button type="text" size="mini" @click="clearAnalysisChanges">全部撤销</el-button></div>
+              <button v-for="(change, index) in analysisChanges" :key="`${change.category}-${change.id}-${change.field || change.op}-${index}`" class="analysis-diff-item" type="button" @click="locateAnalysisChange(change)">
+                <el-tag size="mini" :type="change.op === 'ADD' ? 'success' : change.op === 'DELETE' ? 'danger' : 'warning'">{{ change.op === 'ADD' ? '新增' : change.op === 'DELETE' ? '删除' : '修改' }}</el-tag>
+                <span class="analysis-diff-label">{{ analysisChangeLabel(change) }}</span>
+                <span class="analysis-diff-value">{{ analysisChangeSummary(change) }}</span>
+              </button>
+            </div>
+            <el-tag slot="reference" class="save-badge" size="small" type="warning">待确认差异 · {{ analysisChanges.length }} 项</el-tag>
+          </el-popover>
           <el-tag v-else-if="analysisSaved" class="save-badge" size="small" type="success">已保存</el-tag>
           <el-button
             size="small"
@@ -151,6 +159,8 @@
             <span>{{ (analysisConfig.properties || []).length }} 字段</span>
             <span>{{ (analysisConfig.relations || []).length }} 关系</span>
             <span>{{ ((analysisConfig.logics || []).length + (analysisConfig.actions || []).length) }} 逻辑 / 动作</span>
+            <span>{{ rowsForCategory('metrics').length }} 指标</span>
+            <span>{{ rowsForCategory('dimensions').length }} 维度</span>
           </div>
         </div>
 
@@ -165,9 +175,10 @@
         <!-- 分类 Tab + 表格 -->
         <el-tabs ref="structureTabs" v-model="analysisStructureTab" class="structure-tabs" @tab-click="onStructureTabChange">
           <el-tab-pane label="对象" name="objects">
-            <el-table ref="table-objects" :data="analysisConfig.objects || []" :height="analysisTableHeight" size="mini" :row-class-name="row => analysisRowClass('objects', row)" empty-text="暂无对象候选">
+            <el-table ref="table-objects" :data="rowsForCategory('objects')" :height="analysisTableHeight" size="mini" :row-class-name="row => analysisRowClass('objects', row)" empty-text="暂无对象候选">
               <el-table-column label="对象名称" min-width="150">
                 <template slot-scope="s">
+                  <el-tag v-if="s.row.__deleted" size="mini" type="danger">待删除</el-tag>
                   <el-tag v-if="analysisRowChanged('objects', s.row)" class="corrected-tag" size="mini" type="success">已修正</el-tag>
                   {{ analysisObjectLabel(s.row) }}
                 </template>
@@ -178,9 +189,10 @@
           </el-tab-pane>
 
           <el-tab-pane label="字段" name="properties">
-            <el-table ref="table-properties" :data="analysisConfig.properties || []" :height="analysisTableHeight" size="mini" :row-class-name="row => analysisRowClass('properties', row)" empty-text="暂无字段候选" @row-click="selectAnalysisField">
+            <el-table ref="table-properties" :data="rowsForCategory('properties')" :height="analysisTableHeight" size="mini" :row-class-name="row => analysisRowClass('properties', row)" empty-text="暂无字段候选" @row-click="selectAnalysisField">
               <el-table-column label="字段名称" min-width="140">
                 <template slot-scope="s">
+                  <el-tag v-if="s.row.__deleted" size="mini" type="danger">待删除</el-tag>
                   <el-tag v-if="analysisRowChanged('properties', s.row)" class="corrected-tag" size="mini" type="success">已修正</el-tag>
                   {{ analysisPropertyLabel(s.row) }}
                 </template>
@@ -195,7 +207,7 @@
           </el-tab-pane>
 
           <el-tab-pane label="关系" name="relations">
-            <el-table ref="table-relations" :data="analysisConfig.relations || []" :height="analysisTableHeight" size="mini" :row-class-name="row => analysisRowClass('relations', row)" empty-text="暂无关系候选">
+            <el-table ref="table-relations" :data="rowsForCategory('relations')" :height="analysisTableHeight" size="mini" :row-class-name="row => analysisRowClass('relations', row)" empty-text="暂无关系候选">
               <el-table-column label="关系名称" min-width="140">
                 <template slot-scope="s">
                   <el-tag v-if="analysisRowChanged('relations', s.row)" class="corrected-tag" size="mini" type="success">已修正</el-tag>
@@ -212,7 +224,7 @@
           </el-tab-pane>
 
           <el-tab-pane label="业务逻辑" name="logics">
-            <el-table ref="table-logics" :data="analysisConfig.logics || []" :height="analysisTableHeight" size="mini" :row-class-name="row => analysisRowClass('logics', row)" empty-text="暂无业务逻辑候选">
+            <el-table ref="table-logics" :data="rowsForCategory('logics')" :height="analysisTableHeight" size="mini" :row-class-name="row => analysisRowClass('logics', row)" empty-text="暂无业务逻辑候选">
               <el-table-column label="逻辑名称" min-width="150">
                 <template slot-scope="s">
                   <el-tag v-if="analysisRowChanged('logics', s.row)" class="corrected-tag" size="mini" type="success">已修正</el-tag>
@@ -226,7 +238,7 @@
           </el-tab-pane>
 
           <el-tab-pane label="业务动作" name="actions">
-            <el-table ref="table-actions" :data="analysisConfig.actions || []" :height="analysisTableHeight" size="mini" :row-class-name="row => analysisRowClass('actions', row)" empty-text="暂无业务动作候选">
+            <el-table ref="table-actions" :data="rowsForCategory('actions')" :height="analysisTableHeight" size="mini" :row-class-name="row => analysisRowClass('actions', row)" empty-text="暂无业务动作候选">
               <el-table-column label="动作名称" min-width="150">
                 <template slot-scope="s">
                   <el-tag v-if="analysisRowChanged('actions', s.row)" class="corrected-tag" size="mini" type="success">已修正</el-tag>
@@ -240,8 +252,31 @@
             </el-table>
           </el-tab-pane>
 
+          <el-tab-pane label="语义与维度" name="querySemantics">
+            <div class="query-semantics-help">指标是“统计什么”，维度是“按什么分组”。可在右侧提出新增或修改要求，例如：将 orders.amount 设为“订单金额”指标（SUM），将 orders.status 设为“订单状态”维度。保存后需回配置草案重新点击“草案完成”。</div>
+            <strong class="query-semantics-title">指标</strong>
+            <el-table ref="table-metrics" :data="rowsForCategory('metrics')" :height="Math.max(110, Math.floor(analysisTableHeight / 2) - 25)" size="mini" :row-class-name="row => analysisRowClass('metrics', row)" empty-text="暂无指标候选">
+              <el-table-column label="名称" min-width="130"><template slot-scope="s"><el-tag v-if="analysisRowChanged('metrics', s.row)" size="mini" type="success">已修正</el-tag>{{ s.row.name }}</template></el-table-column>
+              <el-table-column prop="aggregation" label="聚合方式" width="100" />
+              <el-table-column label="映射字段" min-width="150"><template slot-scope="s">{{ analysisSemanticPropertyName(s.row.propertyId) }}</template></el-table-column>
+              <el-table-column prop="definition" label="口径说明" min-width="180" show-overflow-tooltip />
+            </el-table>
+            <strong class="query-semantics-title">维度</strong>
+            <el-table ref="table-dimensions" :data="rowsForCategory('dimensions')" :height="Math.max(100, Math.floor(analysisTableHeight / 2) - 20)" size="mini" :row-class-name="row => analysisRowClass('dimensions', row)" empty-text="暂无维度候选">
+              <el-table-column label="名称" min-width="130"><template slot-scope="s"><el-tag v-if="analysisRowChanged('dimensions', s.row)" size="mini" type="success">已修正</el-tag>{{ s.row.name }}</template></el-table-column>
+              <el-table-column label="映射字段" min-width="150"><template slot-scope="s">{{ analysisSemanticPropertyName(s.row.propertyId) }}</template></el-table-column>
+              <el-table-column prop="definition" label="说明" min-width="180" show-overflow-tooltip />
+            </el-table>
+            <strong v-if="rowsForCategory('timeDimensions').length" class="query-semantics-title">时间维度</strong>
+            <el-table v-if="rowsForCategory('timeDimensions').length" ref="table-timeDimensions" :data="rowsForCategory('timeDimensions')" :height="Math.max(90, Math.floor(analysisTableHeight / 3) - 15)" size="mini" :row-class-name="row => analysisRowClass('timeDimensions', row)">
+              <el-table-column label="名称" min-width="130"><template slot-scope="s"><el-tag v-if="analysisRowChanged('timeDimensions', s.row)" size="mini" type="success">已修正</el-tag>{{ s.row.name }}</template></el-table-column>
+              <el-table-column label="映射字段" min-width="150"><template slot-scope="s">{{ analysisSemanticPropertyName(s.row.propertyId) }}</template></el-table-column>
+              <el-table-column label="粒度" min-width="150"><template slot-scope="s">{{ (s.row.granularities || []).join('、') || '—' }}</template></el-table-column>
+            </el-table>
+          </el-tab-pane>
+
           <el-tab-pane label="服务流" name="serviceFlows">
-            <el-table ref="table-serviceFlows" :data="analysisConfig.serviceFlows || []" :height="analysisTableHeight" size="mini" :row-class-name="row => analysisRowClass('serviceFlows', row)" empty-text="暂无服务流候选">
+            <el-table ref="table-serviceFlows" :data="rowsForCategory('serviceFlows')" :height="analysisTableHeight" size="mini" :row-class-name="row => analysisRowClass('serviceFlows', row)" empty-text="暂无服务流候选">
               <el-table-column label="服务流名称" min-width="150">
                 <template slot-scope="s">
                   <el-tag v-if="analysisRowChanged('serviceFlows', s.row)" class="corrected-tag" size="mini" type="success">已修正</el-tag>
@@ -255,7 +290,7 @@
           </el-tab-pane>
 
           <el-tab-pane label="权限候选" name="permissions">
-            <el-table ref="table-permissionCandidates" :data="analysisConfig.permissionCandidates || []" :height="analysisTableHeight" size="mini" :row-class-name="row => analysisRowClass('permissionCandidates', row)" empty-text="暂无权限候选">
+            <el-table ref="table-permissionCandidates" :data="rowsForCategory('permissionCandidates')" :height="analysisTableHeight" size="mini" :row-class-name="row => analysisRowClass('permissionCandidates', row)" empty-text="暂无权限候选">
               <el-table-column label="资源对象" min-width="150">
                 <template slot-scope="s">
                   <el-tag v-if="analysisRowChanged('permissionCandidates', s.row)" class="corrected-tag" size="mini" type="success">已修正</el-tag>
@@ -269,6 +304,7 @@
               <el-table-column label="状态" width="100"><template slot-scope="s">{{ statusText(s.row.status) }}</template></el-table-column>
             </el-table>
           </el-tab-pane>
+
         </el-tabs>
       </section>
 
@@ -416,7 +452,7 @@
 
         <!-- 示例问题引导（卡片网格） -->
         <div v-if="!messages.length && !loadingMessages" class="example-cards">
-          <span class="example-title">可以这样问</span>
+          <span class="example-title">试试这样问</span>
           <div class="example-grid">
             <button
               v-for="example in (scopeType === SCOPE_TYPE.ANALYSIS ? analysisExamples : examples)"
@@ -425,8 +461,8 @@
               type="button"
               @click="askExample(example)"
             >
-              <i :class="scopeType === SCOPE_TYPE.ANALYSIS ? 'el-icon-magic-stick' : 'el-icon-chat-line-square'" class="example-card-icon" />
               <span class="example-card-text">{{ example }}</span>
+              <i class="el-icon-arrow-right example-card-icon" aria-hidden="true" />
             </button>
           </div>
         </div>
@@ -566,6 +602,7 @@ export default {
       // ── 分析结构（仅 ANALYSIS 模式）──────────────
       analysisConfig: {},
       analysisChanges: [],
+      analysisSavedCorrections: [],
       analysisSaved: false,
       analysisAnswerDraft: '',
       analysisAnswerSaving: false,
@@ -676,6 +713,7 @@ export default {
     this.scopeType = this.$route.query.scopeType || (this.$route.query.spaceId ? SCOPE_TYPE.SPACE : SCOPE_TYPE.ALL)
     this.scopeId = this.$route.query.scopeId || this.$route.query.spaceId || ''
     this.proposalId = this.$route.query.proposalId || ''
+    if (this.$route.query.tab === 'querySemantics') this.analysisStructureTab = 'querySemantics'
     this.spaceId = this.scopeType === SCOPE_TYPE.SPACE ? this.scopeId : ''
     this.loadSpaces()
       .then(() => this.loadScopeTarget())
@@ -748,7 +786,8 @@ export default {
           config = typeof data.config_json === 'string' ? JSON.parse(data.config_json) : (data.config_json || {})
         } catch (e) { config = {} }
         this.analysisConfig = config
-        this.analysisChanges = Array.isArray(config.analysisCorrections) ? config.analysisCorrections : []
+        this.analysisSavedCorrections = Array.isArray(config.analysisCorrections) ? this.cloneData(config.analysisCorrections) : []
+        this.analysisChanges = []
         this.analysisSaved = config.answerStatus === ANSWER_STATUS.CONFIRMED
         this.analysisAnswerDraft = config.llmAnswer || data.summary || ''
         if (data.proposal_id) this.proposalId = String(data.proposal_id)
@@ -794,6 +833,7 @@ export default {
       this.scopeSearchKeyword = ''
       this.analysisConfig = {}
       this.analysisChanges = []
+      this.analysisSavedCorrections = []
       this.analysisSaved = false
       this.analysisAnswerDraft = ''
       this.questionContext = null
@@ -820,6 +860,7 @@ export default {
       if (this.scopeType === SCOPE_TYPE.ANALYSIS) {
         this.analysisConfig = {}
         this.analysisChanges = []
+        this.analysisSavedCorrections = []
         this.analysisSaved = false
       }
       this.questionContext = null
@@ -924,6 +965,7 @@ export default {
       if (!sameAnalysis) {
         this.analysisConfig = {}
         this.analysisChanges = []
+        this.analysisSavedCorrections = []
         this.analysisSaved = false
         this.loadScopeTarget().then(() => this.loadAnalysisAnswer())
       }
@@ -1009,7 +1051,7 @@ export default {
       // 分析模式：更新本地结构，并建立 undo 快照
       if (this.scopeType === SCOPE_TYPE.ANALYSIS) {
         this.analysisConfig = data.analysisConfig || this.analysisConfig
-        this.analysisChanges = data.analysisChanges || this.analysisChanges
+        this.analysisChanges = Array.isArray(data.analysisPendingChanges) ? data.analysisPendingChanges : this.analysisChanges
         this.analysisAnswerDraft = data.answer || this.analysisAnswerDraft
         if (data.analysisUpdatedChanges && data.analysisUpdatedChanges.length) {
           this.analysisSaved = false
@@ -1165,15 +1207,46 @@ export default {
       return row && (row.name || row.column || row.technicalName) || '未命名字段'
     },
 
+    analysisChangeLabel(change) {
+      const row = change.op === 'DELETE' ? change.before : change.value instanceof Object ? change.value : this.analysisCandidate(change.category, change.id)
+      const labels = { objects: '对象', properties: '字段', relations: '关系', logics: '业务逻辑', actions: '业务动作', serviceFlows: '服务流', permissionCandidates: '权限候选', metrics: '指标', dimensions: '维度', terms: '术语' }
+      return `${labels[change.category] || change.category} · ${row && (row.name || row.column || row.table) || change.id}${change.field ? ` / ${change.field}` : ''}`
+    },
+
+    analysisChangeSummary(change) {
+      if (change.op === 'ADD') return this.analysisChangeLabel(change)
+      if (change.op === 'DELETE') return '整项移除'
+      return `${this.displayAnalysisValue(change.before)} → ${this.displayAnalysisValue(change.value)}`
+    },
+
+    displayAnalysisValue(value) {
+      if (value == null || value === '') return '空'
+      return typeof value === 'object' ? JSON.stringify(value) : String(value)
+    },
+
     /** 根据 objectId 查找对象名 */
     analysisObjectName(id) {
       const row = (this.analysisConfig.objects || []).find(item => String(item.id) === String(id))
       return row ? this.analysisObjectLabel(row) : (id || '未关联对象')
     },
 
+    /** 读取直接分类或语义目录中的候选项。 */
+    analysisRows(category, config = this.analysisConfig) {
+      if (Array.isArray(config && config[category])) return config[category]
+      for (const container of ['semanticCatalog', 'querySemantics']) {
+        if (config && config[container] && Array.isArray(config[container][category])) return config[container][category]
+      }
+      return []
+    },
+
+    analysisSemanticPropertyName(id) {
+      const row = this.analysisCandidate('properties', id)
+      return row ? this.analysisPropertyLabel(row) + (row.column ? `（${row.column}）` : '') : (id || '未关联字段')
+    },
+
     /** 判断某行是否已被修正 */
     analysisRowChanged(category, row) {
-      return this.analysisChanges.some(change => change.category === category && String(change.id) === String(row && row.id))
+      return (this.analysisConfig.analysisCorrections || []).some(change => change.category === category && String(change.id) === String(row && row.id))
     },
 
     /** 计算行的 class（选中态 / 定位态） */
@@ -1182,14 +1255,14 @@ export default {
       if (!row) return ''
       const selected = category === 'properties' && this.selectedAnalysisField && String(row.id) === String(this.selectedAnalysisField.id)
       const located = this.locatedAnalysisChange && this.locatedAnalysisChange.category === category && String(row.id) === String(this.locatedAnalysisChange.id)
-      return [selected && 'analysis-row-selected', located && 'analysis-row-located'].filter(Boolean).join(' ')
+      return [selected && 'analysis-row-selected', located && 'analysis-row-located', row.__deleted && 'analysis-row-deleted'].filter(Boolean).join(' ')
     },
 
     /** 定位到某条变更：切换 Tab + 滚动到行 */
     locateAnalysisChange(change) {
       if (!change) return
       // 先切换页签，下一帧再滚动，确保表格已渲染
-      const tab = change.category === 'permissionCandidates' ? 'permissions' : change.category
+      const tab = ['metrics', 'dimensions', 'timeDimensions'].includes(change.category) ? 'querySemantics' : (change.category === 'permissionCandidates' ? 'permissions' : change.category)
       this.analysisStructureTab = tab
       this.locatedAnalysisChange = { category: change.category, id: change.id }
       this.mobilePanel = 'structure'
@@ -1208,7 +1281,9 @@ export default {
 
     /** 根据分类获取行数据 */
     rowsForCategory(category) {
-      return Array.isArray(this.analysisConfig[category]) ? this.analysisConfig[category] : []
+      const rows = this.analysisRows(category).slice()
+      this.analysisChanges.filter(change => change.category === category && change.op === 'DELETE' && !rows.some(row => String(row.id) === String(change.id))).forEach(change => rows.push(Object.assign({}, change.before || {}, { id: change.id, __deleted: true })))
+      return rows
     },
 
     // ════════════════════════════════════════════════════════════
@@ -1222,7 +1297,7 @@ export default {
 
     /** 在 config 中查找指定分类+id 的候选项 */
     analysisCandidate(category, id, config = this.analysisConfig) {
-      const rows = Array.isArray(config && config[category]) ? config[category] : []
+      const rows = this.analysisRows(category, config)
       return rows.find(row => String(row.id) === String(id))
     },
 
@@ -1240,8 +1315,16 @@ export default {
         const current = this.analysisCandidate(change.category, change.id)
         const before = this.analysisCandidate(change.category, change.id, snapshot.beforeConfig)
         const after = this.analysisCandidate(change.category, change.id, snapshot.afterConfig)
+        if (change.op === 'ADD' && current && after && this.sameValue(current, after)) {
+          const rows = this.analysisRows(change.category)
+          const index = rows.findIndex(row => String(row.id) === String(change.id))
+          if (index >= 0) rows.splice(index, 1)
+        } else if (change.op === 'DELETE' && !current && before) {
+          const rows = this.analysisRows(change.category)
+          rows.push(this.cloneData(before))
+        }
         // 仅当当前值与修正后一致时才回滚，避免误覆盖后续编辑
-        if (current && after && this.sameValue(current[change.field], after[change.field])) {
+        if (change.op === 'UPDATE' && current && after && this.sameValue(current[change.field], after[change.field])) {
           if (before && Object.prototype.hasOwnProperty.call(before, change.field)) {
             this.$set(current, change.field, before[change.field])
           } else {
@@ -1250,14 +1333,12 @@ export default {
         }
 
         // 同步修正标记列表
-        const markerIndex = this.analysisChanges.findIndex(row =>
-          row.category === change.category && String(row.id) === String(change.id) && row.field === change.field
-        )
+        const markerIndex = this.analysisChanges.findIndex(row => row.category === change.category && String(row.id) === String(change.id) && (change.field ? row.field === change.field : row.op === change.op))
         const afterMarker = (snapshot.afterChanges || []).find(row =>
-          row.category === change.category && String(row.id) === String(change.id) && row.field === change.field
+          row.category === change.category && String(row.id) === String(change.id) && (change.field ? row.field === change.field : row.op === change.op)
         )
         const beforeMarker = (snapshot.beforeChanges || []).find(row =>
-          row.category === change.category && String(row.id) === String(change.id) && row.field === change.field
+          row.category === change.category && String(row.id) === String(change.id) && (change.field ? row.field === change.field : row.op === change.op)
         )
         if (markerIndex >= 0 && afterMarker && this.sameValue(this.analysisChanges[markerIndex].value, afterMarker.value)) {
           if (beforeMarker) this.$set(this.analysisChanges, markerIndex, this.cloneData(beforeMarker))
@@ -1265,13 +1346,38 @@ export default {
         }
       })
 
-      this.$set(this.analysisConfig, 'analysisCorrections', this.analysisChanges)
+      this.syncAnalysisCorrections()
       this.analysisSaved = false
       item.undone = true
       if (this.selectedAnalysisField) {
         this.selectedAnalysisField = this.analysisCandidate('properties', this.selectedAnalysisField.id) || this.selectedAnalysisField
       }
       this.$modal.msgSuccess('已撤销本次结构修正')
+    },
+
+    clearAnalysisChanges() {
+      this.analysisConfig = this.cloneData(this.analysisConfig)
+      ;(this.analysisChanges || []).forEach(change => {
+        const rows = this.analysisRows(change.category, this.analysisConfig)
+        const index = rows.findIndex(row => String(row.id) === String(change.id))
+        if (change.op === 'ADD' && index >= 0) rows.splice(index, 1)
+        else if (change.op === 'DELETE' && index < 0 && change.before) rows.push(this.cloneData(change.before))
+        else if (change.op === 'UPDATE' && index >= 0) {
+          if (Object.prototype.hasOwnProperty.call(change, 'before')) this.$set(rows[index], change.field, change.before)
+          else this.$delete(rows[index], change.field)
+        }
+      })
+      this.analysisChanges = []
+      this.syncAnalysisCorrections()
+      this.analysisSaved = false
+    },
+
+    syncAnalysisCorrections() {
+      const merged = new Map()
+      ;(this.analysisSavedCorrections || []).concat(this.analysisChanges || []).forEach(change => {
+        merged.set(`${change.category}\u0000${change.id}\u0000${change.field || change.op}`, change)
+      })
+      this.$set(this.analysisConfig, 'analysisCorrections', Array.from(merged.values()))
     },
 
     // ════════════════════════════════════════════════════════════
@@ -1295,8 +1401,11 @@ export default {
         }).then(() => {
           this.analysisConfig.answerStatus = ANSWER_STATUS.CONFIRMED
           this.analysisConfig.llmAnswer = answer
+          this.analysisSavedCorrections = this.cloneData(this.analysisConfig.analysisCorrections || [])
+          this.analysisChanges = []
+          this.syncAnalysisCorrections()
           this.analysisSaved = true
-          this.$modal.msgSuccess('分析结构已保存，并沉淀到 LLM Wiki')
+          this.$modal.msgSuccess('分析结构已保存；如修改了结构，请回配置草案重新点击“草案完成”')
         }).finally(() => { this.analysisAnswerSaving = false })
       }).catch(() => {})
     },
@@ -1346,14 +1455,7 @@ export default {
       document.body.style.userSelect = ''
     },
 
-    /** 切换结构 Tab 后重新计算表格高度 */
-    onStructureTabChange() {
-      this.updateTableHeight()
-    },
-
-    // ════════════════════════════════════════════════════════════
-    //  显示格式化
-    // ════════════════════════════════════════════════════════════
+    onStructureTabChange() { this.updateTableHeight() },
 
     /** 格式化时间：截取到分钟 */
     formatTime(value) {
@@ -1870,9 +1972,9 @@ export default {
 }
 
 /* ── 结构 Tab + 表格 ── */
-.structure-tabs { flex: 1 1 auto; min-height: 0; }
-.structure-tabs ::v-deep .el-tabs__content,
-.structure-tabs ::v-deep .el-tab-pane { height: 100%; }
+.structure-tabs { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; overflow: hidden; }
+.structure-tabs ::v-deep .el-tabs__content { display: flex; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.structure-tabs ::v-deep .el-tab-pane { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; height: 100%; }
 .structure-tabs ::v-deep .el-table { width: 100%; }
 .structure-tabs ::v-deep .el-table__body-wrapper { overflow-y: auto; }
 .corrected-tag {
@@ -1887,380 +1989,75 @@ export default {
   background: var(--c-warning-light) !important;
   transition: background 0.2s;
 }
+.structure-tabs ::v-deep .analysis-row-deleted td { color: var(--c-text-tertiary); text-decoration: line-through; background: #fff4f2 !important; }
+.analysis-diff-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; }
+.analysis-diff-heading div { display: flex; align-items: baseline; gap: 9px; }
+.analysis-diff-heading strong { color: var(--c-text); font-size: 12px; }
+.analysis-diff-heading span { color: var(--c-text-hint); font-size: 11px; }
+.analysis-diff-item { display: grid; width: 100%; grid-template-columns: auto minmax(100px, .8fr) minmax(80px, 1.2fr) 14px; align-items: center; gap: 9px; padding: 6px 4px; border: 0; border-top: 1px solid var(--c-border-light); background: transparent; text-align: left; cursor: pointer; }
+.analysis-diff-item:hover { background: #f8faff; }
+.analysis-diff-label, .analysis-diff-value { overflow: hidden; color: var(--c-text-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.analysis-diff-value { color: var(--c-text-hint); font-family: var(--font-mono, monospace); }
+.analysis-diff-popover-content { max-height: 360px; overflow-y: auto; }
+.analysis-diff-popover-content .analysis-diff-heading { position: sticky; top: 0; padding-bottom: 6px; background: #fff; z-index: 1; }
+.analysis-diff-popover-content .analysis-diff-item { grid-template-columns: auto minmax(90px, .8fr) minmax(80px, 1.2fr); }
+.query-semantics-help { margin-bottom: 8px; padding: 7px 9px; border-radius: 6px; background: var(--c-primary-light); color: var(--c-text-secondary); font-size: 11px; line-height: 1.5; }
+.query-semantics-title { display: block; margin: 5px 0; color: var(--c-text); font-size: 12px; }
 
-/* ═══ 对话面板 ═══ */
-.conversation-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  flex: 0 0 auto;
-  padding-bottom: 10px;
-  margin-bottom: 4px;
-  border-bottom: 1px solid var(--c-border-light);
-}
-.conversation-heading strong {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--c-text);
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-/* 右侧内联范围选择器 */
-.inline-scope {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-  overflow: hidden;
-}
-.scope-arrow {
-  font-size: 10px;
-  color: var(--c-border);
-  flex-shrink: 0;
-}
-
-/* 内联 Pill 按钮（比 header 里的更紧凑） */
-.scope-pill-inline {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 24px;
-  padding: 0 8px;
-  border: 1px solid var(--c-border);
-  border-radius: 20px;
-  background: var(--c-bg);
-  color: var(--c-text);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s;
-  user-select: none;
-  white-space: nowrap;
-  max-width: 180px;
-}
-.scope-pill-inline:hover {
-  border-color: var(--c-primary);
-  background: var(--c-primary-light);
-  color: var(--c-primary);
-}
-.scope-pill-inline > i:first-child {
-  font-size: 12px;
-  color: var(--c-primary);
-  flex-shrink: 0;
-}
-.scope-pill-inline > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.scope-pill-inline > i:last-child {
-  font-size: 10px;
-  color: var(--c-text-hint);
-  flex-shrink: 0;
-}
-.scope-pill-inline--placeholder {
-  border-style: dashed;
-  color: var(--c-text-hint);
-}
-.scope-pill-inline--placeholder > i:first-child {
-  color: var(--c-text-hint);
-}
-
-/* ── 消息流 ── */
-.messages {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
-  padding: 16px 4px 8px;
-}
-.msg {
-  display: flex;
-  gap: 10px;
-  margin-bottom: 20px;
-}
+/* ── 对话区：沿用首页的白卡片、轻边框和蓝色强调 ── */
+.conversation-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex: 0 0 auto; min-height: 34px; margin-bottom: 10px; }
+.conversation-heading strong { font-size: 16px; font-weight: 700; }
+.inline-scope { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.messages { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px 4px 14px; scrollbar-color: #d8d4cf transparent; }
+.msg { display: flex; align-items: flex-start; gap: 9px; max-width: 820px; margin: 0 auto 16px; }
 .msg.user { flex-direction: row-reverse; }
-
-/* 头像 */
-.msg-avatar {
-  flex-shrink: 0;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 15px;
-  line-height: 1;
-}
-.avatar-user {
-  background: var(--c-primary-light);
-  color: var(--c-primary);
-}
-.avatar-bot {
-  background: linear-gradient(135deg, var(--c-primary), #4f46e5);
-  color: #fff;
-}
-
-/* 消息体 */
-.msg-body { flex: 1; min-width: 0; }
-.msg.user .msg-body {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-}
-.msg-role {
-  margin-bottom: 4px;
-  font-size: 11px;
-  color: var(--c-text-hint);
-}
-.msg-context {
-  margin-bottom: 4px;
-  font-size: 11px;
-  color: var(--c-text-secondary);
-  padding: 2px 8px;
-  background: var(--c-surface);
-  border-radius: var(--r-chip);
-  border-left: 2px solid var(--c-primary);
-}
-.msg-content {
-  display: inline-block;
-  max-width: 92%;
-  padding: 10px 14px;
-  border-radius: 12px 12px 12px 4px;
-  background: var(--c-surface);
-  color: var(--c-text);
-  font-size: 14px;
-  line-height: 1.7;
-  text-align: left;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  border: 1px solid var(--c-border);
-}
-.msg.user .msg-content {
-  background: var(--c-primary);
-  color: #fff;
-  border-color: var(--c-primary);
-  border-radius: 12px 12px 4px 12px;
-}
-.msg-failed .msg-content {
-  background: #fef2f2;
-  border-color: #fecaca;
-  color: var(--c-error);
-}
-.msg-spinner { margin-right: 6px; color: var(--c-primary); }
+.msg-avatar { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex: 0 0 28px; border-radius: 9px; font-size: 13px; }
+.avatar-user { background: var(--aw-blue); color: #fff; }
+.avatar-bot { border: 1px solid #dcecff; background: #edf5ff; color: var(--aw-blue); }
+.msg-body { min-width: 0; max-width: min(82%, 720px); }
+.msg.user .msg-body { text-align: right; }
+.msg-role { margin: 0 0 4px; color: var(--aw-soft); font-size: 11px; }
+.msg-context { margin-bottom: 4px; color: var(--aw-blue); font-size: 11px; }
+.msg-content { display: inline-block; max-width: 100%; padding: 10px 13px; border: 1px solid var(--c-border); border-radius: 9px 9px 9px 3px; background: #fff; color: var(--aw-ink); font-size: 13px; line-height: 1.7; white-space: pre-wrap; word-break: break-word; box-shadow: 0 2px 8px rgba(0, 0, 0, .025); }
+.msg.user .msg-content { border-color: var(--aw-blue); border-radius: 9px 9px 3px 9px; background: var(--aw-blue); color: #fff; text-align: left; }
+.msg-failed .msg-content { border-color: #f2c9c5; background: #fff7f6; color: #a33b32; }
+.msg-spinner { margin-right: 6px; color: var(--aw-blue); }
 .msg-retry { margin-top: 4px; }
-.msg-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 4px;
-}
-.undo-done { font-size: 11px; color: var(--c-text-hint); }
-
-/* 引用资料 */
-.msg-citations {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 6px;
-}
-.citations-label { font-size: 11px; color: var(--c-text-hint); }
-.citation-btn { margin: 0; font-size: 12px; }
-.msg-saved { margin-top: 5px; font-size: 11px; color: var(--c-success); }
-
-/* ═══ 示例问题卡片 ═══ */
-.example-cards {
-  flex: 0 0 auto;
-  padding: 12px 0 6px;
-  border-top: 1px solid var(--c-border-light);
-}
-.example-title {
-  display: block;
-  margin-bottom: 10px;
-  font-size: 12px;
-  color: var(--c-text-hint);
-  font-weight: 500;
-}
-.example-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-}
-.example-card {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 10px 12px;
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-card);
-  background: var(--c-bg);
-  cursor: pointer;
-  text-align: left;
-  transition: all 0.15s;
-}
-.example-card:hover {
-  border-color: var(--c-primary);
-  background: var(--c-primary-light);
-  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.1);
-}
-.example-card-icon { font-size: 16px; color: var(--c-primary); }
-.example-card-text {
-  font-size: 12px;
-  color: var(--c-text-secondary);
-  line-height: 1.5;
-}
-
-/* ═══ 输入区 ═══ */
-.composer {
-  flex: 0 0 auto;
-  padding-top: 10px;
-  border-top: 1px solid var(--c-border-light);
-}
-.composer-options { margin-bottom: 6px; }
-.save-answer-check { color: var(--c-text-secondary); font-size: 12px; }
-.question-context {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 6px;
-}
-.qc-label { font-size: 12px; color: var(--c-text-secondary); }
+.msg-actions { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.undo-done { color: var(--aw-soft); font-size: 11px; }
+.msg-citations { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
+.msg-actions, .msg-saved { font-size: 11px; }
+.citations-label { margin-right: 6px; color: var(--aw-soft); }
+.citation-btn, .msg-retry { padding: 0; color: var(--aw-blue); }
+.msg-saved { color: #258c78; }
+.example-cards { flex: 0 0 auto; width: 100%; max-width: 820px; margin: 0 auto 12px; }
+.example-title { display: block; margin-bottom: 8px; color: var(--aw-muted); font-size: 12px; font-weight: 600; }
+.example-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.example-card { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 58px; padding: 10px 11px; border: 1px solid #e5e0dc; border-radius: 9px; background: #fff; color: var(--aw-muted); font-family: inherit; text-align: left; cursor: pointer; transition: border-color .18s ease, background .18s ease, box-shadow .18s ease, transform .18s ease; }
+.example-card:hover { border-color: #cfe2fb; background: #f7fbff; color: var(--aw-ink); box-shadow: 0 5px 14px rgba(0, 117, 222, .08); transform: translateY(-1px); }
+.example-card:focus-visible { outline: 2px solid rgba(0, 117, 222, .35); outline-offset: 2px; }
+.example-card-text { flex: 1; font-size: 12px; line-height: 1.45; }
+.example-card-icon { flex: 0 0 auto; color: #a39e98; font-size: 12px; }
+.example-card:hover .example-card-icon { color: var(--aw-blue); }
+.composer { flex: 0 0 auto; padding-top: 10px; border-top: 1px solid var(--c-border-light); }
+.composer-options { min-height: 22px; margin-bottom: 6px; }
+.save-answer-check { color: var(--aw-muted); font-size: 12px; }
+.question-context { display: flex; align-items: center; gap: 7px; margin-bottom: 7px; }
+.qc-label { color: var(--aw-soft); font-size: 11px; }
 .input-wrap { position: relative; }
-.input-wrap ::v-deep .el-textarea__inner {
-  padding: 10px 88px 10px 12px;
-  border-color: var(--c-border);
-  border-radius: var(--r-card);
-  resize: none;
-  font-size: 14px;
-  line-height: 1.6;
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-.input-wrap ::v-deep .el-textarea__inner:focus {
-  border-color: var(--c-primary);
-  box-shadow: 0 0 0 3px var(--c-primary-light);
-}
-.send-btn {
-  position: absolute;
-  right: 8px;
-  bottom: 8px;
-  z-index: 1;
-  border-radius: var(--r-chip);
-}
-.composer-footer {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 4px;
-  font-size: 11px;
-  color: var(--c-text-hint);
-}
-
-/* ═══ 历史会话抽屉 ═══ */
+.input-wrap ::v-deep .el-textarea__inner { min-height: 76px; padding: 11px 72px 11px 12px; border: 1px solid #d8d4cf; border-radius: 9px; background: #fff; color: var(--aw-ink); resize: none; transition: border-color .18s ease, box-shadow .18s ease; }
+.input-wrap ::v-deep .el-textarea__inner:focus { border-color: var(--aw-blue); box-shadow: 0 0 0 3px rgba(0, 117, 222, .1); }
+.send-btn { position: absolute; right: 9px; bottom: 9px; border-radius: 7px; }
+.composer-footer { display: flex; justify-content: space-between; gap: 8px; padding: 6px 2px 0; color: var(--aw-soft); font-size: 10px; }
 .history-list { padding: 0 16px 20px; }
-.session-item {
-  display: block;
-  width: 100%;
-  padding: 10px 12px;
-  margin-bottom: 5px;
-  border: 0;
-  border-radius: var(--r-card);
-  background: transparent;
-  color: var(--c-text);
-  text-align: left;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.session-item:hover {
-  background: var(--c-surface);
-}
-.session-item.active {
-  background: var(--c-primary-light);
-  color: var(--c-primary);
-}
-.session-title {
-  display: block;
-  font-size: 13px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.session-meta {
-  display: block;
-  margin-top: 4px;
-  font-size: 11px;
-  color: var(--c-text-hint);
-}
-
-/* ═══ 引用资料弹窗 ═══ */
-.source-heading {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 16px;
-  color: var(--c-text);
-}
-.source-description { color: var(--c-text-secondary); }
-.source-content {
-  max-height: 480px;
-  overflow: auto;
-  margin-top: 12px;
-  padding: 16px;
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-card);
-  background: var(--c-surface);
-  color: var(--c-text);
-  font-size: 13px;
-  line-height: 1.7;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-/* ═══ 响应式：中等桌面 ═══ */
-@media (min-width: 1024px) and (max-width: 1279px) {
-  .page-title { font-size: 15px; }
-  .crumb-pill { max-width: 160px; }
-}
-
-/* ═══ 响应式：平板 / 小桌面 ═══ */
-@media (max-width: 1023px) {
-  .wiki-assistant {
-    height: auto;
-    min-height: calc(100vh - 106px);
-    overflow: visible;
-    padding: 10px 14px 20px;
-  }
-  .page-header { flex-wrap: wrap; height: auto; padding: 8px 12px; min-height: 44px; }
-  .context-crumbs { flex: 1 1 100%; order: 2; justify-content: flex-start; flex-wrap: wrap; }
-  .header-brand { flex: 1 1 auto; order: 1; }
-  .header-actions { order: 1; flex-shrink: 0; }
-  .crumb-pill { max-width: 160px; }
-
-  .mobile-tabs { display: flex; }
-  .resize-handle { display: none; }
-  .workspace {
-    display: block;
-    min-height: 620px;
-    overflow: visible;
-    border: 0;
-    background: transparent;
-  }
-  .structure-panel, .conversation-panel {
-    width: 100% !important;
-    height: calc(100vh - 220px);
-    min-height: 520px;
-    padding: 12px;
-    border: 1px solid var(--c-border);
-    border-radius: var(--r-panel);
-    background: var(--c-bg);
-  }
-  .conversation-panel { border-left: 1px solid var(--c-border); margin-top: 10px; }
-  .mobile-hidden { display: none; }
-  .structure-metrics { justify-content: flex-start; }
-}
-
+.session-item { display: block; width: 100%; padding: 10px 12px; margin-bottom: 5px; border: 0; border-radius: 8px; background: transparent; color: var(--aw-ink); text-align: left; cursor: pointer; transition: background .16s ease, color .16s ease; }
+.session-item:hover { background: #f7f5f3; }
+.session-item.active { background: #edf5ff; color: var(--aw-blue); }
+.session-title { display: block; overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.session-meta { display: block; margin-top: 4px; color: var(--aw-soft); font-size: 11px; }
+.source-heading { display: flex; align-items: center; gap: 10px; color: var(--aw-ink); font-size: 16px; }
+.source-description { color: var(--aw-muted); line-height: 1.6; }
+.source-content { max-height: 480px; overflow: auto; margin-top: 12px; padding: 16px; border: 1px solid var(--c-border); border-radius: 9px; background: #faf9f8; color: var(--aw-ink); font: 13px/1.7 var(--font-mono, monospace); white-space: pre-wrap; }
 /* ═══ 响应式：手机 ═══ */
 @media (max-width: 600px) {
   .page-title { font-size: 14px; }
@@ -2270,6 +2067,69 @@ export default {
   .crumb-pill { max-width: 120px; }
   .crumb-label { display: none; }
   .example-grid { grid-template-columns: 1fr; }
+}
+
+/* 对话页沿用系统页面的暖灰画布和蓝色主色，压缩留白避免工作区过大。 */
+.wiki-assistant {
+  --c-primary: var(--aw-blue);
+  --c-primary-hover: var(--aw-blue-dark);
+  --c-primary-light: #edf5ff;
+  --c-text: var(--aw-ink);
+  --c-text-secondary: var(--aw-muted);
+  --c-text-hint: var(--aw-soft);
+  --c-text-tertiary: var(--aw-soft);
+  --c-border: #ddd9d5;
+  --c-border-light: #eeeae7;
+  --c-surface: #faf9f8;
+  --r-panel: 12px;
+  --r-card: 10px;
+  box-sizing: border-box;
+  height: calc(100vh - 126px);
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 14px 24px 18px;
+  background: var(--aw-warm);
+}
+.page-header { height: 54px; padding: 0 16px; border-radius: 12px; box-shadow: var(--aw-card-shadow); }
+.header-icon-wrap { border: 1px solid #dcecff; border-radius: 8px; background: #edf5ff; color: var(--aw-blue); }
+.page-title, .conversation-heading strong, .structure-heading-text strong, .scope-panel-heading strong { color: var(--aw-ink); }
+.workspace { border-radius: 12px; box-shadow: var(--aw-card-shadow); }
+.scope-panel { flex-basis: 236px; padding: 16px 12px 12px; background: #fbfaf9; }
+.structure-panel { padding: 14px 14px 0; }
+.conversation-panel { padding: 14px 14px 10px; }
+.scope-nav-item.active, .scope-target-item.active { border-color: #cfe2fb; background: #edf5ff; color: var(--aw-blue); box-shadow:none; }
+.scope-nav-item:hover { border-color:#d7e7ff; background:#f4f8ff; }
+.avatar-bot { border:1px solid #dcecff; background:#edf5ff; color:var(--aw-blue); }
+.scope-pill-inline { display:flex; align-items:center; gap:7px; max-width:220px; min-height:30px; padding:0 10px; border:1px solid #e5e0dc; border-radius:8px; background:#fff; color:var(--aw-muted); font-size:12px; font-family:inherit; cursor:pointer; transition:border-color .16s ease, background .16s ease, color .16s ease; }
+.scope-pill-inline span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.scope-pill-inline > i:first-child { color:var(--aw-blue); }
+.scope-pill-inline > i:last-child { flex:0 0 auto; color:var(--aw-soft); font-size:10px; }
+.scope-pill-inline:hover, .scope-pill-inline--placeholder { border-color:#cfe2fb; background:#f7fbff; color:var(--aw-blue); }
+.scope-arrow { color:#b8b2ac; font-size:10px; }
+.input-wrap ::v-deep .el-textarea__inner { border-radius:9px; }
+.send-btn { border-radius:7px; }
+@media (max-width:1023px) {
+  .wiki-assistant { height:auto; min-height:calc(100vh - 106px); padding:10px 14px 20px; }
+  .page-header { flex-wrap:wrap; height:auto; min-height:44px; padding:8px 12px; }
+  .mobile-tabs { display:flex; }
+  .workspace { min-height:620px; }
+  .structure-panel { width:100% !important; min-width:0; flex:1 1 auto !important; padding:14px; }
+  .conversation-panel { min-width:0; flex:1 1 auto; padding:14px; }
+  .resize-handle { display:none; }
+  .mobile-hidden { display:none !important; }
+  .workspace.has-scope { flex-direction:column; }
+  .workspace.has-scope .scope-panel { flex:0 0 auto; max-height:190px; border-right:0; border-bottom:1px solid var(--c-border); }
+  .workspace.has-scope .conversation-panel { min-height:480px; border-left:0; }
+}
+@media (max-width:600px) {
+  .wiki-assistant { padding:8px 10px 14px; }
+  .header-brand { min-width:0; }
+  .header-actions { gap:4px; }
+  .scope-pill-inline { max-width:140px; padding:0 7px; }
+  .inline-scope { gap:5px; }
+  .workspace.has-structure { min-height:560px; }
+  .workspace.has-scope { min-height:720px; }
+  .example-card { min-height:46px; }
 }
 </style>
 

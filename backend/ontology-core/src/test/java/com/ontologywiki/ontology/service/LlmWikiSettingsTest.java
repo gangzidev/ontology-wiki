@@ -45,6 +45,60 @@ public class LlmWikiSettingsTest {
     }
 
     @Test
+    public void analysisContextShowsMetricAndDimensionCandidates() {
+        LlmWikiClient client = client(new OntologyIntegrationProperties());
+        String config = "{\"properties\":[{\"id\":\"amount\",\"name\":\"订单金额\",\"column\":\"amount\",\"objectId\":\"orders\"}],"
+                + "\"semanticCatalog\":{\"metrics\":[{\"id\":\"order_amount\",\"name\":\"订单金额\",\"propertyId\":\"amount\",\"aggregation\":\"SUM\"}],"
+                + "\"dimensions\":[{\"id\":\"order_status\",\"name\":\"订单状态\",\"propertyId\":\"status\"}]}}";
+
+        String context = client.analysisCandidateContext(config, "当前结构有哪些指标和维度");
+
+        Assert.assertTrue(context.contains("指标=1"));
+        Assert.assertTrue(context.contains("维度=1"));
+        Assert.assertTrue(context.contains("指标候选"));
+        Assert.assertTrue(context.contains("order_amount"));
+        Assert.assertTrue(context.contains("维度候选"));
+        Assert.assertTrue(context.contains("order_status"));
+
+        Map<String,Object> property = new java.util.LinkedHashMap<>();
+        property.put("id", "amount"); property.put("name", "订单金额"); property.put("column", "amount"); property.put("objectId", "orders");
+        Map<String,Object> semanticCatalog = new java.util.LinkedHashMap<>();
+        semanticCatalog.put("metrics", new java.util.ArrayList<>()); semanticCatalog.put("dimensions", new java.util.ArrayList<>());
+        Map<String,Object> editableConfig = new java.util.LinkedHashMap<>();
+        editableConfig.put("properties", java.util.Collections.singletonList(property)); editableConfig.put("semanticCatalog", semanticCatalog);
+        Map<String,Object> metric = new java.util.LinkedHashMap<>();
+        metric.put("id", "order_amount"); metric.put("name", "订单金额"); metric.put("propertyId", "amount"); metric.put("aggregation", "SUM");
+        Map<String,Object> metricChange = new java.util.LinkedHashMap<>();
+        metricChange.put("op", "ADD"); metricChange.put("category", "metrics"); metricChange.put("value", metric);
+
+        java.util.List<Map<String,Object>> changes = client.normalizeAnalysisChanges(editableConfig, java.util.Collections.singletonList(metricChange), true);
+        Map<String,Object> updated = client.applyAnalysisChanges(editableConfig, changes);
+
+        Assert.assertEquals(1, ((java.util.List<?>) ((Map<?,?>) updated.get("semanticCatalog")).get("metrics")).size());
+    }
+
+    @Test
+    public void askingFieldsByChineseObjectNameIncludesAllFieldsOfThatObject() {
+        LlmWikiClient client = client(new OntologyIntegrationProperties());
+        String config = "{\"objects\":[{\"id\":\"user_post\",\"name\":\"用户与岗位关联表\",\"table\":\"sys_user_post\"},"
+                + "{\"id\":\"role_dept\",\"name\":\"角色和部门关联表\",\"table\":\"sys_role_dept\"}],"
+                + "\"properties\":[{\"id\":\"up_user\",\"name\":\"用户编号\",\"column\":\"user_id\",\"dataType\":\"BIGINT\",\"objectId\":\"user_post\"},"
+                + "{\"id\":\"up_post\",\"name\":\"岗位编号\",\"column\":\"post_id\",\"dataType\":\"BIGINT\",\"objectId\":\"user_post\"},"
+                + "{\"id\":\"rd_role\",\"name\":\"角色编号\",\"column\":\"role_id\",\"dataType\":\"BIGINT\",\"objectId\":\"role_dept\"},"
+                + "{\"id\":\"rd_dept\",\"name\":\"部门编号\",\"column\":\"dept_id\",\"dataType\":\"BIGINT\",\"objectId\":\"role_dept\"}]}";
+
+        String userPost = client.analysisCandidateContext(config, "用户与岗位关联表 都有什么字段");
+        String roleDept = client.analysisCandidateContext(config, "角色和部门关联表 sys_role_dept 都有什么字段");
+
+        Assert.assertTrue(userPost.contains("column=user_id"));
+        Assert.assertTrue(userPost.contains("column=post_id"));
+        Assert.assertFalse(userPost.contains("column=role_id"));
+        Assert.assertTrue(roleDept.contains("column=role_id"));
+        Assert.assertTrue(roleDept.contains("column=dept_id"));
+        Assert.assertFalse(roleDept.contains("column=user_id"));
+    }
+
+    @Test
     public void analysisContextKeepsExplicitFieldEvenWhenLongListIsClipped() {
         LlmWikiClient client = client(new OntologyIntegrationProperties());
         StringBuilder config = new StringBuilder("{\"objects\":[{\"id\":\"object_sys_role\",\"name\":\"角色信息表\",\"table\":\"sys_role\"}],\"properties\":[");
@@ -141,6 +195,30 @@ public class LlmWikiSettingsTest {
         } catch (IllegalArgumentException expected) {
             Assert.assertTrue(expected.getMessage().contains("现有结构"));
         }
+    }
+
+    @Test
+    public void analysisChangesCanAddAndDeleteWithValidatedSnapshots() {
+        LlmWikiClient client = client(new OntologyIntegrationProperties());
+        Map<String,Object> object = new java.util.LinkedHashMap<>(); object.put("id", "role-object"); object.put("name", "角色表"); object.put("table", "sys_role");
+        Map<String,Object> existing = new java.util.LinkedHashMap<>(); existing.put("id", "old-field"); existing.put("name", "旧字段"); existing.put("objectId", "role-object"); existing.put("column", "old_col"); existing.put("dataType", "VARCHAR");
+        Map<String,Object> base = new java.util.LinkedHashMap<>(); base.put("objects", java.util.Collections.singletonList(object)); base.put("properties", new java.util.ArrayList<>(java.util.Collections.singletonList(existing)));
+
+        Map<String,Object> added = new java.util.LinkedHashMap<>(); added.put("id", "new-field"); added.put("name", "新字段"); added.put("objectId", "role-object"); added.put("column", "new_col"); added.put("dataType", "BIGINT");
+        Map<String,Object> add = new java.util.LinkedHashMap<>(); add.put("op", "ADD"); add.put("category", "properties"); add.put("value", added);
+        java.util.List<Map<String,Object>> addChanges = client.normalizeAnalysisChanges(base, java.util.Collections.singletonList(add), true);
+        Map<String,Object> afterAdd = client.applyAnalysisChanges(base, addChanges);
+        Assert.assertEquals(2, ((java.util.List<?>) afterAdd.get("properties")).size());
+        afterAdd.put("analysisCorrections", addChanges);
+        Assert.assertTrue(client.normalizeAnalysisChanges(afterAdd, java.util.Collections.singletonList(add), true).isEmpty());
+
+        Map<String,Object> delete = new java.util.LinkedHashMap<>(); delete.put("op", "DELETE"); delete.put("category", "properties"); delete.put("id", "old-field");
+        java.util.List<Map<String,Object>> deleteChanges = client.normalizeAnalysisChanges(base, java.util.Collections.singletonList(delete), true);
+        Map<String,Object> afterDelete = client.applyAnalysisChanges(base, deleteChanges);
+        Assert.assertEquals(0, ((java.util.List<?>) afterDelete.get("properties")).size());
+        Assert.assertEquals("旧字段", deleteChanges.get(0).get("before") instanceof Map ? ((Map<?,?>) deleteChanges.get(0).get("before")).get("name") : null);
+        afterDelete.put("analysisCorrections", deleteChanges);
+        Assert.assertTrue(client.normalizeAnalysisChanges(afterDelete, java.util.Collections.singletonList(delete), true).isEmpty());
     }
 
     /**

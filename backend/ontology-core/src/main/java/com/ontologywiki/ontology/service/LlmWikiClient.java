@@ -391,7 +391,7 @@ public class LlmWikiClient {
             return "[" + r.get("asset_type") + "] " + r.get("asset_name") + "\n" + evidence;
         }).collect(Collectors.joining("\n\n"));
         String prompt = analysisScope
-                ? "你是本体分析结果校对助手。只依据本轮提供的少量草案候选和会话焦点回答，不要假设未提供的字段。精确修改由服务端按草案候选生成；只有无法确定目标或修改内容时才在 changes 中提出候选修正。不得编造候选 ID。只返回 JSON：{\"answer\":\"面向用户的中文说明\",\"changes\":[{\"category\":\"properties\",\"id\":\"候选 ID\",\"field\":\"dataType\",\"value\":\"TEXT\",\"reason\":\"修改原因\"}]}。changes 只能修改提供候选中的可编辑字段。目标不唯一时先追问，changes 返回空数组。不要返回配置草案 JSON、Wiki Markdown 或泛化资料摘要。\n\n当前分析任务与相关候选：\n" + clip(taskContext, 4500)
+                ? "你是本体分析结果助手。必须只依据当前提供的完整分析配置回答，不得编造配置外的信息。回答任何关于对象、字段、关系、逻辑、动作、服务流、权限、指标、维度和术语的问题。用户明确要求新增、修改或删除时，先在 answer 说明变更，changes 返回待确认差异；没有明确变更意图时 changes 必须为空。严格只返回 JSON：{\"answer\":\"面向用户的中文说明\",\"changes\":[{\"op\":\"UPDATE\",\"category\":\"properties\",\"id\":\"候选ID\",\"field\":\"dataType\",\"value\":\"TEXT\",\"reason\":\"修改原因\"}]}。op 只能是 UPDATE、ADD、DELETE：UPDATE 修改已有项的白名单字段；ADD 的 value 必须是完整的新对象，必须包含稳定 id 和该分类要求的字段；DELETE 只能删除用户明确指定的已有 id。不得执行 SQL，不得返回配置草案 JSON 或 Wiki Markdown；目标不唯一、字段不足或新增信息不完整时先追问，changes 返回空数组。\n\n当前分析任务与完整配置：\n" + clip(taskContext, 18000)
                 : "请根据以下本体 Wiki 页面、来源资料和分析任务上下文回答问题；业务问题没有资料证据时，明确说明当前资料中未找到依据，不要猜测。若用户是在问候或闲聊，请自然、简短地回应，不要求 Wiki 资料。分析任务中的候选配置尚待人工审核。中文作答，并结合对话上下文回答本轮问题。\n\n资料：\n" + clip(context, 4200) + (taskContext.isEmpty() ? "" : "\n\n关联分析任务与候选内容：\n" + clip(taskContext, 1500));
         prompt += (conversation.isEmpty() ? "" : "\n\n此前对话：\n" + clip(conversation, 1800)) + "\n\n本轮问题：\n" + clipQuestion(question, 1800);
         String rawAnswer = openAiText(prompt, analysisScope ? "ANALYSIS" : "FAST");
@@ -424,6 +424,7 @@ public class LlmWikiClient {
                     base.get("analysisCorrections") instanceof List ? (List<?>) base.get("analysisCorrections") : Collections.emptyList(), false, false);
             List<Map<String,Object>> changes = mergeAnalysisChangeMarkers(base, storedChanges, activeChanges);
             result.put("analysisChanges", changes);
+            result.put("analysisPendingChanges", activeChanges);
             List<Map<String,Object>> newChanges = new ArrayList<>(deterministicChanges); newChanges.addAll(modelChanges);
             result.put("analysisUpdatedChanges", normalizeAnalysisChanges(base, newChanges, false));
             Map<String,Object> working = applyAnalysisChanges(base, activeChanges); working.put("analysisCorrections", changes);
@@ -476,7 +477,9 @@ public class LlmWikiClient {
             context.append("\n会话焦点：").append(match.unique.qualifiedName()).append("；候选ID=").append(match.unique.id);
         }
         Map<String,Object> state = new LinkedHashMap<>();
-        state.put("context", clip(context.toString(), 5000)); state.put("baseConfig", baseConfig); state.put("config", workingConfig);
+        try { context.append("\n完整分析配置 JSON：").append(clip(writeJson(workingConfig), 24000)); }
+        catch (Exception ignored) { /* 配置已由候选文本提供，序列化失败时仍可回答 */ }
+        state.put("context", clip(context.toString(), 24000)); state.put("baseConfig", baseConfig); state.put("config", workingConfig);
         state.put("changes", changes); state.put("deterministicChanges", deterministicChanges); state.put("contextState", nextState);
         state.put("blockModelChanges", match.ambiguous);
         return state;
@@ -501,12 +504,20 @@ public class LlmWikiClient {
                 .append("，逻辑=").append(size(config.get("logics")))
                 .append("，动作=").append(size(config.get("actions")))
                 .append("，服务流=").append(size(config.get("serviceFlows")))
-                .append("，权限=").append(size(config.get("permissionCandidates"))).append('\n');
-        if (!match.matches.isEmpty()) {
+                .append("，权限=").append(size(config.get("permissionCandidates")))
+                .append("，指标=").append(candidateRows(config, "metrics").size())
+                .append("，维度=").append(candidateRows(config, "dimensions").size()).append('\n');
+        Set<String> mentionedObjects = asksForFields(question) && match.matches.isEmpty() ? appendObjectFields(result, config, question) : Collections.<String>emptySet();
+        boolean overview = question == null || question.trim().isEmpty() || containsAny(question, "概述", "有哪些", "当前", "结构", "总体", "全部");
+        if (!mentionedObjects.isEmpty()) {
+            for (Map<String,Object> object : maps(config.get("objects"))) if (mentionedObjects.contains(value(object.get("id")))) {
+                result.append("对象：id=").append(value(object.get("id"))).append("；name=").append(value(object.get("name")))
+                        .append("；table=").append(value(object.get("table"))).append('\n');
+            }
+        } else if (!match.matches.isEmpty()) {
             result.append(match.ambiguous ? "字段候选（存在歧义，请先确认）：\n" : "相关字段候选：\n");
             for (AnalysisCandidateResolver.Candidate candidate : match.matches) appendResolvedCandidate(result, candidate);
         } else {
-            boolean overview = question == null || question.trim().isEmpty() || containsAny(question, "概述", "有哪些", "当前", "结构", "总体", "全部");
             appendCandidateNodes(result, "对象", config.get("objects"), question, overview, "id", "name", "table", "technicalName", "description");
             appendCandidateNodes(result, "字段", config.get("properties"), question, overview, "id", "name", "column", "technicalName", "dataType", "objectId", "description");
             appendCandidateNodes(result, "关系", config.get("relations"), question, overview, "id", "name", "sourceObjectId", "targetObjectId", "sourceColumn", "targetColumn", "cardinality", "description");
@@ -515,7 +526,58 @@ public class LlmWikiClient {
             appendCandidateNodes(result, "服务流", config.get("serviceFlows"), question, overview, "id", "name", "steps", "description");
             appendCandidateNodes(result, "权限候选", config.get("permissionCandidates"), question, overview, "id", "actionId", "resourceId", "operation", "subjectType", "suggestedSubjects", "rowFilterRequired", "status");
         }
+        appendCandidateNodes(result, "指标候选", candidateRows(config, "metrics"), question, overview, "id", "name", "definition", "aggregation", "propertyId", "synonyms");
+        appendCandidateNodes(result, "维度候选", candidateRows(config, "dimensions"), question, overview, "id", "name", "definition", "propertyId", "synonyms");
+        appendCandidateNodes(result, "时间维度候选", candidateRows(config, "timeDimensions"), question, overview, "id", "name", "definition", "propertyId", "granularities");
         return clip(result.toString(), 3500);
+    }
+
+    /** 用户指定对象并询问字段时，带出该对象的完整字段候选，而非只匹配字段名。 */
+    private Set<String> appendObjectFields(StringBuilder result, Map<String,Object> config, String question) {
+        Set<String> objectIds = new LinkedHashSet<>();
+        if (question == null || question.trim().isEmpty()) return objectIds;
+        List<Map<String,Object>> objects = maps(config.get("objects"));
+        for (Map<String,Object> object : objects) {
+            if (matchesNode(object, question, "id", "name", "table", "technicalName")) {
+                String id = value(object.get("id"));
+                if (!id.isEmpty()) objectIds.add(id);
+            }
+        }
+        if (objectIds.isEmpty()) return objectIds;
+        List<Map<String,Object>> fields = new ArrayList<>();
+        for (Map<String,Object> property : maps(config.get("properties"))) {
+            if (objectIds.contains(value(property.get("objectId")))) fields.add(property);
+        }
+        if (fields.isEmpty()) return objectIds;
+        // 若问题同时点名了字段，先放该字段，再补齐对象字段，避免长列表裁剪掉精确候选。
+        fields.sort((left, right) -> Boolean.compare(
+                matchesNode(right, question, "id", "name", "column", "technicalName"),
+                matchesNode(left, question, "id", "name", "column", "technicalName")));
+        result.append("相关字段候选：指定对象完整字段清单\n");
+        int count = Math.min(fields.size(), 40);
+        for (int i = 0; i < count; i++) {
+            Map<String,Object> field = fields.get(i);
+            result.append("- id=").append(value(field.get("id")))
+                    .append("；name=").append(value(field.get("name")))
+                    .append("；column=").append(value(field.get("column")))
+                    .append("；dataType=").append(value(field.get("dataType")))
+                    .append("；objectId=").append(value(field.get("objectId")));
+            if (!value(field.get("description")).isEmpty()) result.append("；description=").append(clip(value(field.get("description")), 100));
+            result.append('\n');
+        }
+        if (fields.size() > count) result.append("（字段较多，仅列出前").append(count).append("项）\n");
+        return objectIds;
+    }
+
+    private boolean asksForFields(String question) {
+        return question != null && containsAny(question, "字段", "列名", "有哪些列", "包含什么列", "字段清单", "表结构");
+    }
+
+    private List<Map<String,Object>> maps(Object value) {
+        if (!(value instanceof List)) return Collections.emptyList();
+        List<Map<String,Object>> result = new ArrayList<>();
+        for (Object row : (List<?>) value) if (row instanceof Map) result.add((Map<String,Object>) row);
+        return result;
     }
 
     private void appendResolvedCandidate(StringBuilder result, AnalysisCandidateResolver.Candidate candidate) {
@@ -585,13 +647,17 @@ public class LlmWikiClient {
 
     private static final Map<String,Set<String>> ANALYSIS_EDITABLE_FIELDS = new LinkedHashMap<>();
     static {
-        ANALYSIS_EDITABLE_FIELDS.put("objects", new HashSet<>(Arrays.asList("name", "description")));
-        ANALYSIS_EDITABLE_FIELDS.put("properties", new HashSet<>(Arrays.asList("name", "dataType", "description", "nullable", "isPrimaryKey")));
-        ANALYSIS_EDITABLE_FIELDS.put("relations", new HashSet<>(Arrays.asList("name", "description", "cardinality")));
-        ANALYSIS_EDITABLE_FIELDS.put("logics", new HashSet<>(Arrays.asList("name", "conditionText", "risk", "description")));
-        ANALYSIS_EDITABLE_FIELDS.put("actions", new HashSet<>(Arrays.asList("name", "operation", "risk", "description")));
-        ANALYSIS_EDITABLE_FIELDS.put("serviceFlows", new HashSet<>(Arrays.asList("name", "description", "trigger")));
-        ANALYSIS_EDITABLE_FIELDS.put("permissionCandidates", new HashSet<>(Arrays.asList("operation", "subjectType", "rowFilterRequired")));
+        ANALYSIS_EDITABLE_FIELDS.put("objects", new HashSet<>(Arrays.asList("name", "table", "technicalName", "description")));
+        ANALYSIS_EDITABLE_FIELDS.put("properties", new HashSet<>(Arrays.asList("name", "column", "technicalName", "objectId", "dataType", "description", "nullable", "isPrimaryKey")));
+        ANALYSIS_EDITABLE_FIELDS.put("relations", new HashSet<>(Arrays.asList("name", "sourceObjectId", "targetObjectId", "sourceColumn", "targetColumn", "cardinality", "description")));
+        ANALYSIS_EDITABLE_FIELDS.put("logics", new HashSet<>(Arrays.asList("name", "conditionText", "risk", "status", "description")));
+        ANALYSIS_EDITABLE_FIELDS.put("actions", new HashSet<>(Arrays.asList("name", "operation", "objectId", "risk", "status", "description")));
+        ANALYSIS_EDITABLE_FIELDS.put("serviceFlows", new HashSet<>(Arrays.asList("name", "description", "trigger", "steps")));
+        ANALYSIS_EDITABLE_FIELDS.put("permissionCandidates", new HashSet<>(Arrays.asList("operation", "resourceId", "subjectType", "suggestedSubjects", "rowFilterRequired", "status")));
+        ANALYSIS_EDITABLE_FIELDS.put("metrics", new HashSet<>(Arrays.asList("name", "definition", "aggregation", "propertyId", "synonyms")));
+        ANALYSIS_EDITABLE_FIELDS.put("dimensions", new HashSet<>(Arrays.asList("name", "definition", "propertyId", "synonyms")));
+        ANALYSIS_EDITABLE_FIELDS.put("timeDimensions", new HashSet<>(Arrays.asList("name", "definition", "propertyId", "synonyms", "granularities", "default")));
+        ANALYSIS_EDITABLE_FIELDS.put("terms", new HashSet<>(Arrays.asList("name", "description", "synonyms")));
     }
 
     private Map<String,Object> readAnalysisConfig(Object raw) {
@@ -617,36 +683,71 @@ public class LlmWikiClient {
             if (!(raw instanceof Map)) { if (strict) throw new IllegalArgumentException("分析修正格式无效"); else continue; }
             Map<?,?> item = (Map<?,?>) raw;
             String category = item.get("category") == null ? "" : String.valueOf(item.get("category"));
+            String operation = item.get("op") == null ? "UPDATE" : String.valueOf(item.get("op")).trim().toUpperCase(Locale.ROOT);
+            if (!Arrays.asList("ADD", "UPDATE", "DELETE").contains(operation)) { if (strict) throw new IllegalArgumentException("变更类型只支持 ADD、UPDATE 或 DELETE"); else continue; }
+            Object rawValue = item.get("value");
             String id = item.get("id") == null ? "" : String.valueOf(item.get("id"));
+            if ("ADD".equals(operation) && rawValue instanceof Map && ((Map<?,?>) rawValue).get("id") != null) id = String.valueOf(((Map<?,?>) rawValue).get("id"));
             String field = item.get("field") == null ? "" : String.valueOf(item.get("field"));
             Object value = item.get("value");
-            boolean validValue = value instanceof String || value instanceof Number || value instanceof Boolean;
-            List<?> candidates = base.get(category) instanceof List ? (List<?>) base.get(category) : Collections.emptyList();
-            boolean found = candidates.stream().anyMatch(candidate -> candidate instanceof Map && Objects.equals(id, String.valueOf(((Map<?,?>) candidate).get("id"))));
-            if (id.trim().isEmpty() || !found || !ANALYSIS_EDITABLE_FIELDS.containsKey(category) || !ANALYSIS_EDITABLE_FIELDS.get(category).contains(field) || !validValue) {
-                if (strict) throw new IllegalArgumentException("分析修正必须对应现有结构中的可编辑字段");
+            List<?> candidates = candidateRows(base, category);
+            if (!ANALYSIS_EDITABLE_FIELDS.containsKey(category)) { if (strict) throw new IllegalArgumentException("不支持修改该分析分类：" + category); else continue; }
+            final String candidateId = id;
+            boolean found = candidates.stream().anyMatch(candidate -> candidate instanceof Map && Objects.equals(candidateId, String.valueOf(((Map<?,?>) candidate).get("id"))));
+            if (alreadyAppliedAnalysisChange(base, item, category, operation, id, field, value, found)) continue;
+            if ("ADD".equals(operation)) {
+                if (!(value instanceof Map)) { if (strict) throw new IllegalArgumentException("新增项必须包含完整对象 value"); else continue; }
+                Map<String,Object> added = copyMap((Map<?,?>) value);
+                if (id.trim().isEmpty()) id = UUID.randomUUID().toString();
+                added.put("id", id);
+                if (!requiredAddFields(category, added) || found || !validAddedReferences(base, category, added)) { if (strict) throw new IllegalArgumentException("新增项字段不完整、ID 重复或引用不存在的配置"); else continue; }
+                Map<String,Object> change = new LinkedHashMap<>(); change.put("op", operation); change.put("category", category); change.put("id", id); change.put("value", added);
+                if (item.get("reason") != null) change.put("reason", String.valueOf(item.get("reason")).trim());
+                latest.put(category + "\u0000" + id, change);
                 continue;
             }
+            if (id.trim().isEmpty() || !found) { if (strict) throw new IllegalArgumentException("修改或删除必须对应当前配置中的现有结构 ID"); else continue; }
+            if ("DELETE".equals(operation)) {
+                if (isReferenced(base, category, id)) { if (strict) throw new IllegalArgumentException("该配置项仍被其他候选引用，请先解除引用后再删除"); else continue; }
+                Map<String,Object> change = new LinkedHashMap<>(); change.put("op", operation); change.put("category", category); change.put("id", id);
+                Map<?,?> original = findAnalysisCandidate(base, category, id); if (original != null) change.put("before", copyMap(original));
+                if (item.get("reason") != null) change.put("reason", String.valueOf(item.get("reason")).trim());
+                latest.put(category + "\u0000" + id, change);
+                continue;
+            }
+            boolean validValue = value instanceof String || value instanceof Number || value instanceof Boolean || value instanceof List;
+            if (!ANALYSIS_EDITABLE_FIELDS.get(category).contains(field) || !validValue) { if (strict) throw new IllegalArgumentException("修改字段不在白名单中或值格式无效"); else continue; }
             String text = String.valueOf(value).trim();
             if (text.isEmpty() || text.length() > 4000) { if (strict) throw new IllegalArgumentException("分析修正内容不能为空且不超过4000字"); else continue; }
+            if ("aggregation".equals(field) && !Arrays.asList("COUNT", "SUM", "AVG", "MIN", "MAX").contains(text.toUpperCase(Locale.ROOT))) { if (strict) throw new IllegalArgumentException("指标聚合方式无效"); else continue; }
+            if ("propertyId".equals(field) && !candidateRows(base, "properties").stream().anyMatch(property -> property instanceof Map && Objects.equals(text, String.valueOf(((Map<?,?>) property).get("id"))))) { if (strict) throw new IllegalArgumentException("查询语义必须引用当前配置中的属性"); else continue; }
+            if ("synonyms".equals(field) && text.split("[,，;；\\n]").length > 20) { if (strict) throw new IllegalArgumentException("同义词最多20个"); else continue; }
             if ("risk".equals(field) && !Arrays.asList("LOW", "MEDIUM", "HIGH", "CRITICAL").contains(text.toUpperCase(Locale.ROOT))) { if (strict) throw new IllegalArgumentException("风险等级无效"); else continue; }
             if ("operation".equals(field) && !Arrays.asList("READ", "SELECT", "INSERT", "UPDATE", "DELETE").contains(text.toUpperCase(Locale.ROOT))) { if (strict) throw new IllegalArgumentException("操作类型无效"); else continue; }
             if ("subjectType".equals(field) && !Arrays.asList("ROLE", "USER", "GROUP", "SERVICE").contains(text.toUpperCase(Locale.ROOT))) { if (strict) throw new IllegalArgumentException("主体类型无效"); else continue; }
             if ("trigger".equals(field) && !Arrays.asList("MCP_REQUEST", "MANUAL", "SCHEDULE", "EVENT", "WEBHOOK").contains(text.toUpperCase(Locale.ROOT))) { if (strict) throw new IllegalArgumentException("触发方式无效"); else continue; }
             if ("cardinality".equals(field) && !Arrays.asList("ONE_TO_ONE", "ONE_TO_MANY", "MANY_TO_ONE", "MANY_TO_MANY").contains(text.toUpperCase(Locale.ROOT))) { if (strict) throw new IllegalArgumentException("关系基数无效"); else continue; }
             Object normalizedValue = value instanceof String ? text : value;
-            if (Arrays.asList("risk", "operation", "subjectType", "trigger", "cardinality").contains(field)) normalizedValue = text.toUpperCase(Locale.ROOT);
+            if (Arrays.asList("risk", "operation", "subjectType", "trigger", "cardinality", "aggregation").contains(field)) normalizedValue = text.toUpperCase(Locale.ROOT);
+            if ("synonyms".equals(field)) {
+                List<String> synonyms = new ArrayList<>();
+                for (String synonym : text.split("[,，;；\\n]")) if (!synonym.trim().isEmpty()) synonyms.add(synonym.trim());
+                if (synonyms.isEmpty()) { if (strict) throw new IllegalArgumentException("至少填写一个同义词"); else continue; }
+                normalizedValue = synonyms;
+            }
             if (Arrays.asList("nullable", "isPrimaryKey", "rowFilterRequired").contains(field)) {
                 if (!("true".equalsIgnoreCase(text) || "false".equalsIgnoreCase(text))) { if (strict) throw new IllegalArgumentException("布尔值无效"); else continue; }
                 normalizedValue = Boolean.parseBoolean(text);
             }
             Map<String,Object> change = new LinkedHashMap<>();
-            change.put("category", category); change.put("id", id); change.put("field", field); change.put("value", normalizedValue);
+            change.put("op", operation); change.put("category", category); change.put("id", id); change.put("field", field); change.put("value", normalizedValue);
+            Map<?,?> original = findAnalysisCandidate(base, category, id); if (original != null) change.put("before", original.get(field));
             if (item.get("reason") != null) change.put("reason", String.valueOf(item.get("reason")).trim());
             latest.put(category + "\u0000" + id + "\u0000" + field, change);
         }
         List<Map<String,Object>> changes = new ArrayList<>();
         for (Map<String,Object> change : latest.values()) {
+            if (!"UPDATE".equals(change.get("op"))) { changes.add(change); continue; }
             Map<?,?> candidate = findAnalysisCandidate(base, String.valueOf(change.get("category")), String.valueOf(change.get("id")));
             if (removeUnchanged && candidate != null && Objects.equals(candidate.get(change.get("field")), change.get("value"))) continue;
             changes.add(change);
@@ -662,27 +763,107 @@ public class LlmWikiClient {
     }
 
     private String changeKey(Map<String,Object> change) {
-        return change.get("category") + "\u0000" + change.get("id") + "\u0000" + change.get("field");
+        return change.get("category") + "\u0000" + change.get("id") + "\u0000" + change.getOrDefault("field", change.get("op"));
+    }
+
+    /** 保存后的差异会随配置一同回传；识别已落地的相同操作，避免二次保存重复新增或误报删除失败。 */
+    private boolean alreadyAppliedAnalysisChange(Map<String,Object> base, Map<?,?> requested, String category, String operation, String id, String field, Object value, boolean found) {
+        Object rawMarkers = base.get("analysisCorrections");
+        if (!(rawMarkers instanceof List)) return false;
+        for (Object raw : (List<?>) rawMarkers) {
+            if (!(raw instanceof Map)) continue;
+            Map<?,?> marker = (Map<?,?>) raw;
+            if (!Objects.equals(category, String.valueOf(marker.get("category"))) || !Objects.equals(id, String.valueOf(marker.get("id"))) || !Objects.equals(operation, String.valueOf(marker.get("op")))) continue;
+            if ("ADD".equals(operation) && found) {
+                Map<?,?> current = findAnalysisCandidate(base, category, id);
+                if (current != null && Objects.equals(current, value)) return true;
+            }
+            if ("DELETE".equals(operation) && !found) return true;
+            if ("UPDATE".equals(operation) && Objects.equals(field, String.valueOf(marker.get("field")))) {
+                Map<?,?> current = findAnalysisCandidate(base, category, id);
+                if (current != null && Objects.equals(current.get(field), value)) return true;
+            }
+        }
+        return false;
     }
 
     private Map<?,?> findAnalysisCandidate(Map<String,Object> config, String category, String id) {
-        Object raw = config.get(category);
-        if (!(raw instanceof List)) return null;
-        for (Object candidate : (List<?>) raw) if (candidate instanceof Map && Objects.equals(id, String.valueOf(((Map<?,?>) candidate).get("id")))) return (Map<?,?>) candidate;
+        for (Object candidate : candidateRows(config, category)) if (candidate instanceof Map && Objects.equals(id, String.valueOf(((Map<?,?>) candidate).get("id")))) return (Map<?,?>) candidate;
         return null;
+    }
+
+    private List<?> candidateRows(Map<String,Object> config, String category) {
+        Object direct = config.get(category);
+        if (direct instanceof List) return (List<?>) direct;
+        for (String container : Arrays.asList("semanticCatalog", "querySemantics")) {
+            Object nested = config.get(container);
+            if (nested instanceof Map && ((Map<?,?>) nested).get(category) instanceof List) return (List<?>) ((Map<?,?>) nested).get(category);
+        }
+        return Collections.emptyList();
     }
 
     Map<String,Object> applyAnalysisChanges(Map<String,Object> base, List<Map<String,Object>> changes) {
         Map<String,Object> config = readAnalysisConfig(writeJson(base));
         for (Map<String,Object> change : changes) {
-            Object raw = config.get(change.get("category"));
-            if (!(raw instanceof List)) continue;
-            for (Object candidate : (List<?>) raw) if (candidate instanceof Map && Objects.equals(String.valueOf(change.get("id")), String.valueOf(((Map<?,?>) candidate).get("id")))) {
-                ((Map<String,Object>) candidate).put(String.valueOf(change.get("field")), change.get("value"));
-                break;
-            }
+            String category = String.valueOf(change.get("category")), id = String.valueOf(change.get("id"));
+            List<Map<String,Object>> candidates = mutableCandidateRows(config, category);
+            if ("ADD".equals(change.get("op"))) candidates.add(copyMap((Map<?,?>) change.get("value")));
+            else if ("DELETE".equals(change.get("op"))) candidates.removeIf(candidate -> Objects.equals(id, String.valueOf(candidate.get("id"))));
+            else for (Map<String,Object> candidate : candidates) if (Objects.equals(id, String.valueOf(candidate.get("id")))) { candidate.put(String.valueOf(change.get("field")), change.get("value")); break; }
         }
         return config;
+    }
+
+    private Map<String,Object> copyMap(Map<?,?> source) { Map<String,Object> result = new LinkedHashMap<>(); source.forEach((key, value) -> result.put(String.valueOf(key), value)); return result; }
+
+    private List<Map<String,Object>> mutableCandidateRows(Map<String,Object> config, String category) {
+        Object direct = config.get(category);
+        if (direct instanceof List) return (List<Map<String,Object>>) direct;
+        for (String container : Arrays.asList("semanticCatalog", "querySemantics")) {
+            Object nested = config.get(container);
+            if (nested instanceof Map) {
+                Object rows = ((Map<?,?>) nested).get(category);
+                if (rows instanceof List) return (List<Map<String,Object>>) rows;
+            }
+        }
+        List<Map<String,Object>> rows = new ArrayList<>(); config.put(category, rows); return rows;
+    }
+
+    private boolean requiredAddFields(String category, Map<String,Object> row) {
+        List<String> required = new ArrayList<>(Collections.singletonList("name"));
+        if ("properties".equals(category)) required.addAll(Arrays.asList("objectId", "column", "dataType"));
+        if ("relations".equals(category)) required.addAll(Arrays.asList("sourceObjectId", "targetObjectId", "sourceColumn", "targetColumn"));
+        if ("metrics".equals(category)) required.addAll(Arrays.asList("propertyId", "aggregation"));
+        if (Arrays.asList("dimensions", "timeDimensions").contains(category)) required.add("propertyId");
+        if ("metrics".equals(category) && !Arrays.asList("COUNT", "SUM", "AVG", "MIN", "MAX").contains(value(row.get("aggregation")).toUpperCase(Locale.ROOT))) return false;
+        if ("objects".equals(category) && value(row.get("table")).isEmpty() && value(row.get("technicalName")).isEmpty()) return false;
+        for (String field : required) if (value(row.get(field)).trim().isEmpty()) return false;
+        for (String field : row.keySet()) if (!"id".equals(field) && !ANALYSIS_EDITABLE_FIELDS.get(category).contains(field)
+                && !Arrays.asList("table", "column", "technicalName", "objectId", "sourceObjectId", "targetObjectId", "sourceColumn", "targetColumn", "conditionText", "steps", "definition", "aggregation", "propertyId", "synonyms", "granularities", "default", "resourceId", "suggestedSubjects").contains(field)) return false;
+        return true;
+    }
+
+    private boolean validAddedReferences(Map<String,Object> config, String category, Map<String,Object> row) {
+        if ("properties".equals(category) && !exists(config, "objects", row.get("objectId"))) return false;
+        if ("relations".equals(category) && (!exists(config, "objects", row.get("sourceObjectId")) || !exists(config, "objects", row.get("targetObjectId")))) return false;
+        if ("actions".equals(category) && row.get("objectId") != null && !exists(config, "objects", row.get("objectId"))) return false;
+        if (("metrics".equals(category) || "dimensions".equals(category) || "timeDimensions".equals(category)) && !exists(config, "properties", row.get("propertyId"))) return false;
+        return true;
+    }
+
+    private boolean exists(Map<String,Object> config, String category, Object id) {
+        if (id == null) return false;
+        return candidateRows(config, category).stream().anyMatch(row -> row instanceof Map && Objects.equals(String.valueOf(id), String.valueOf(((Map<?,?>) row).get("id"))));
+    }
+
+    private boolean isReferenced(Map<String,Object> config, String category, String id) {
+        if ("objects".equals(category)) {
+            for (Object row : candidateRows(config, "properties")) if (row instanceof Map && id.equals(String.valueOf(((Map<?,?>) row).get("objectId")))) return true;
+            for (Object row : candidateRows(config, "relations")) if (row instanceof Map && (id.equals(String.valueOf(((Map<?,?>) row).get("sourceObjectId"))) || id.equals(String.valueOf(((Map<?,?>) row).get("targetObjectId"))))) return true;
+        }
+        if ("properties".equals(category)) for (String related : Arrays.asList("metrics", "dimensions", "timeDimensions")) for (Object row : candidateRows(config, related))
+            if (row instanceof Map && id.equals(String.valueOf(((Map<?,?>) row).get("propertyId")))) return true;
+        return false;
     }
 
     private String analysisKnowledgeMarkdown(String answer, Map<String,Object> config) {

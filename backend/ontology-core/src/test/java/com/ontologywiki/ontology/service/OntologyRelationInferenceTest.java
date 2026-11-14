@@ -26,6 +26,12 @@ public class OntologyRelationInferenceTest {
         Assert.assertTrue(((Number) manyToMany.get("confidence")).doubleValue() >= 0.85);
         Assert.assertTrue(String.valueOf(manyToMany.get("evidence")).contains("user_id"));
         Assert.assertTrue(String.valueOf(manyToMany.get("evidence")).contains("role_id"));
+        Map<?, ?> catalog = (Map<?, ?>) result.get("semanticCatalog");
+        Map<String, Object> catalogRelation = ((List<Map<String, Object>>) catalog.get("relations")).stream()
+                .filter(r -> "MANY_TO_MANY".equals(r.get("cardinality"))).findFirst().orElse(null);
+        Assert.assertNotNull("many-to-many relation should be queryable after review", catalogRelation);
+        Assert.assertEquals("user_id", catalogRelation.get("viaSourceColumn"));
+        Assert.assertEquals("user_id", catalogRelation.get("sourceKeyColumn"));
         Assert.assertTrue(relations.stream().anyMatch(r -> "sys_user_role".equals(objectTable(result, String.valueOf(r.get("sourceObjectId")))) && "sys_user".equals(objectTable(result, String.valueOf(r.get("targetObjectId"))))));
         Assert.assertTrue(relations.stream().anyMatch(r -> "sys_user_role".equals(objectTable(result, String.valueOf(r.get("sourceObjectId")))) && "sys_role".equals(objectTable(result, String.valueOf(r.get("targetObjectId"))))));
     }

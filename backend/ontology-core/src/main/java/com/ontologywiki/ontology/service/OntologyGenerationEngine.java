@@ -94,8 +94,11 @@ public class OntologyGenerationEngine {
         warnings.addAll(list(stage7.get("warnings")));
         stageReports.add(report(7, "流程与权限", stage7));
 
+        Map<String, Object> semanticCatalog = semanticCatalog(processableTables, stage1, stage2, stage4, stage6, evidence);
+        stageReports.add(report(8, "查询语义候选", semanticCatalog));
+
         result.put("version", "1.0");
-        result.put("stages", requestedStages == null || requestedStages.isEmpty() ? Arrays.asList(1,2,3,4,5,6,7) : new ArrayList<>(requestedStages));
+        result.put("stages", requestedStages == null || requestedStages.isEmpty() ? Arrays.asList(1,2,3,4,5,6,7,8) : new ArrayList<>(requestedStages));
         result.put("objects", stage4.get("objects"));
         result.put("properties", stage2.get("properties"));
         result.put("identitySpecs", stage2.get("identitySpecs"));
@@ -115,6 +118,7 @@ public class OntologyGenerationEngine {
         result.put("serviceFlows", stage7.get("serviceFlows"));
         result.put("permissionCandidates", stage7.get("permissionCandidates"));
         result.put("queryPatterns", stage7.get("queryPatterns"));
+        result.put("semanticCatalog", semanticCatalog);
         result.put("targetConfig", targetConfig(result));
         result.put("evidence", evidence);
         result.put("warnings", warnings);
@@ -138,7 +142,7 @@ public class OntologyGenerationEngine {
             if (score < 4) warnings.add(warning("LOW_QUALITY_TABLE", name, "表注释、字段或主键证据不足"));
             Map<String, Object> item = new LinkedHashMap<>(); item.put("table", name); item.put("key", tableKey(table)); item.put("score", score); item.put("processable", score >= 4); item.put("sampleCount", samples.size()); scores.add(item);
             if (!samples.isEmpty()) {
-                Map<String, Object> profile = new LinkedHashMap<>(); profile.put("table", name); profile.put("sampleCount", samples.size());
+                Map<String, Object> profile = new LinkedHashMap<>(); profile.put("table", name); profile.put("key", tableKey(table)); profile.put("sampleCount", samples.size());
                 List<Map<String, Object>> columnProfiles = new ArrayList<>();
                 for (Map<String, Object> column : columns) {
                     String columnName = text(column.get("name")); if (columnName == null) continue;
@@ -230,6 +234,98 @@ public class OntologyGenerationEngine {
         return false;
     }
 
+    private Map<String, Object> semanticCatalog(List<Map<String, Object>> tables, Map<String, Object> stage1,
+                                                Map<String, Object> stage2, Map<String, Object> stage4,
+                                                Map<String, Object> stage6, List<Map<String, Object>> evidence) {
+        List<Map<String, Object>> metrics = new ArrayList<>(), dimensions = new ArrayList<>(), timeDimensions = new ArrayList<>();
+        Map<String, Map<String, Object>> properties = new LinkedHashMap<>(), objects = new LinkedHashMap<>();
+        for (Map<String, Object> property : list(stage2.get("properties"))) properties.put(text(property.get("id")), property);
+        for (Map<String, Object> object : list(stage2.get("objects"))) objects.put(text(object.get("id")), object);
+        Map<String, Map<String, String>> profiles = new HashMap<>();
+        for (Map<String, Object> profile : list(stage1.get("dataProfiles"))) {
+            Map<String, String> columns = new HashMap<>();
+            for (Map<String, Object> column : list(profile.get("columns"))) columns.put(text(column.get("column")), text(column.get("cardinality")));
+            profiles.put(text(profile.get("key")).toLowerCase(Locale.ROOT), columns);
+        }
+        Set<String> metricObjects = new HashSet<>();
+        for (Map<String, Object> property : properties.values()) {
+            String propertyId = text(property.get("id")), column = text(property.get("column"));
+            String type = text(property.get("dataType")); type = type == null ? "" : type.toUpperCase(Locale.ROOT);
+            String columnName = column == null ? "" : column.toLowerCase(Locale.ROOT);
+            Map<String, Object> object = objects.get(text(property.get("objectId")));
+            String tableName = text(object == null ? null : object.get("table"));
+            String physicalKey = object == null ? "" : tableKey(object).toLowerCase(Locale.ROOT);
+            String name = text(property.get("name"));
+            Map<String, Object> sourceEvidence = new LinkedHashMap<>();
+            sourceEvidence.put("table", tableName); sourceEvidence.put("column", column); sourceEvidence.put("dataType", type);
+            sourceEvidence.put("source", "schema.property");
+
+            if (isTimeType(type) || isTimeName(columnName)) {
+                Map<String, Object> candidate = semanticCandidate("time-dimension", property, name, null, 0.78, sourceEvidence);
+                candidate.put("granularities", Arrays.asList("DAY", "WEEK", "MONTH", "QUARTER", "YEAR"));
+                timeDimensions.add(candidate);
+                evidence.add(ev("query.timeDimension", propertyId, "日期或时间字段可作为时间维度候选"));
+            } else if (isNumericType(type)) {
+                String aggregation = isIdentifierName(columnName) ? "COUNT" : isAverageName(columnName) ? "AVG" : "SUM";
+                Map<String, Object> candidate = semanticCandidate("metric", property, name, aggregation, 0.68, sourceEvidence);
+                candidate.put("definition", name + ("COUNT".equals(aggregation) ? "数量" : "合计")); metrics.add(candidate);
+                metricObjects.add(text(property.get("objectId")));
+                evidence.add(ev("query.metric", propertyId, "数值字段可作为" + aggregation + "指标候选"));
+            } else if (isDimensionType(type) || isEnumName(columnName)) {
+                Map<String, String> columns = profiles.get(physicalKey);
+                String cardinality = columns == null ? null : columns.get(column);
+                if ("LOW".equals(cardinality) || isEnumName(columnName) || isEnumComment(name)) {
+                    dimensions.add(semanticCandidate("dimension", property, name, null,
+                            "LOW".equals(cardinality) ? 0.76 : 0.62, sourceEvidence));
+                    evidence.add(ev("query.dimension", propertyId, "枚举或低基数字段可作为维度候选"));
+                }
+            }
+        }
+        // 没有数值字段的对象仍可按主键计数。
+        for (Map<String, Object> object : objects.values()) {
+            if (metricObjects.contains(text(object.get("id")))) continue;
+            String key = tableKey(object), primaryKey = null;
+            for (Map<String, Object> table : tables) if (key.equals(tableKey(table)) && !strings(table.get("primaryKeys")).isEmpty()) { primaryKey = strings(table.get("primaryKeys")).get(0); break; }
+            if (primaryKey == null) continue;
+            for (Map<String, Object> property : properties.values()) if (text(object.get("id")).equals(text(property.get("objectId"))) && primaryKey.equalsIgnoreCase(text(property.get("column")))) {
+                Map<String, Object> sourceEvidence = new LinkedHashMap<>(); sourceEvidence.put("table", object.get("table")); sourceEvidence.put("column", primaryKey); sourceEvidence.put("source", "primaryKey");
+                metrics.add(semanticCandidate("metric", property, objectName(object, "对象") + "数量", "COUNT", 0.74, sourceEvidence));
+                evidence.add(ev("query.metric", text(property.get("id")), "对象主键生成记录数指标候选")); break;
+            }
+        }
+        List<Map<String, Object>> relations = new ArrayList<>();
+        for (Map<String, Object> relation : list(stage4.get("relations"))) {
+            // 查询语义保留可直接连接和显式中间表关系；再化关联对象的边由中间表关系代替，避免出现两条等价路径。
+            if (!"m2mReification".equals(relation.get("inferenceMethod"))) relations.add(relation);
+        }
+        Map<String, Object> catalog = new LinkedHashMap<>();
+        catalog.put("metrics", metrics); catalog.put("dimensions", dimensions); catalog.put("timeDimensions", timeDimensions);
+        catalog.put("terms", stage6.get("terms")); catalog.put("relations", relations);
+        if (timeDimensions.size() == 1) timeDimensions.get(0).put("default", true);
+        catalog.put("status", "DRAFT"); catalog.put("reviewRequired", true);
+        return catalog;
+    }
+
+    private Map<String, Object> semanticCandidate(String prefix, Map<String, Object> property, String name,
+                                                   String aggregation, double confidence, Map<String, Object> evidence) {
+        String displayName = name == null ? humanize(text(property.get("column"))) : name;
+        Map<String, Object> candidate = item(id(prefix, text(property.get("id"))), displayName, "property", confidence);
+        candidate.put("propertyId", property.get("id")); candidate.put("definition", displayName);
+        candidate.put("synonyms", Collections.singletonList(property.get("column")));
+        candidate.put("reviewRequired", true); candidate.put("evidence", evidence);
+        if (aggregation != null) candidate.put("aggregation", aggregation);
+        return candidate;
+    }
+
+    private boolean isNumericType(String type) { return type.matches(".*\\b(TINYINT|SMALLINT|MEDIUMINT|INT|INTEGER|BIGINT|DECIMAL|NUMERIC|FLOAT|DOUBLE|REAL|NUMBER)\\b.*"); }
+    private boolean isTimeType(String type) { return type.matches(".*\\b(DATE|DATETIME|TIMESTAMP|TIME|YEAR)\\b.*"); }
+    private boolean isDimensionType(String type) { return type.matches(".*\\b(CHAR|VARCHAR|NCHAR|NVARCHAR|TEXT|STRING|CLOB|ENUM|BOOLEAN|BOOL)\\b.*"); }
+    private boolean isTimeName(String name) { return name.matches(".*(date|time|created|updated|_at$|_on$|day|month|year|week|quarter|日期|时间|创建|更新|年月|季度|月份).*"); }
+    private boolean isIdentifierName(String name) { return name.matches("(^|_)(id|code|no|number|key)$|.*(_id|_code|_no|_number)$"); }
+    private boolean isAverageName(String name) { return name.matches(".*(rate|ratio|percent|percentage|average|avg|均价|平均|率|比例).*"); }
+    private boolean isEnumName(String name) { return name.matches(".*(status|state|type|category|class|level|region|province|city|channel|kind|状态|类型|类别|分类|等级|地区|区域|省|市|渠道).*"); }
+    private boolean isEnumComment(String name) { return name != null && name.matches(".*(状态|类型|类别|分类|等级|地区|区域|渠道).*"); }
+
     private Map<String, Object> stage4(List<Map<String, Object>> tables, Map<String, Object> stage2,
                                        List<Map<String, Object>> evidence, List<Map<String, Object>> warnings) {
         List<Map<String, Object>> relations = new ArrayList<>(), mappings = new ArrayList<>(), derived = new ArrayList<>(), validations = new ArrayList<>();
@@ -302,7 +398,12 @@ public class OntologyGenerationEngine {
                     boolean inferredJoin = Boolean.TRUE.equals(first.get("inferred")) || Boolean.TRUE.equals(second.get("inferred"));
                     String detail = "关联表 " + tableName + " 的联合主键字段 " + text(first.get("column")) + "、" + text(second.get("column")) + " 分别匹配对象主键 " + text(first.get("referencedTable")) + "." + text(first.get("referencedColumn")) + " 和 " + text(second.get("referencedTable")) + "." + text(second.get("referencedColumn")) + "，字段类型兼容" + (inferredJoin ? "；部分关系由表名和字段名推断" : "；关系由数据库外键确认");
                     Map<String, Object> rel = item(id("relation", key + ".many_to_many." + text(first.get("column")) + "." + text(second.get("column"))), objectName(objectsById.get(firstTarget), text(first.get("referencedTable"))) + "关联" + objectName(objectsById.get(secondTarget), text(second.get("referencedTable"))), "joinTableInference", inferredJoin ? 0.90 : 0.99);
-                    rel.put("sourceObjectId", firstTarget); rel.put("targetObjectId", secondTarget); rel.put("sourceColumn", first.get("column")); rel.put("targetColumn", second.get("column")); rel.put("viaTable", tableName); rel.put("viaObjectId", sourceId); rel.put("viaSourceColumn", first.get("column")); rel.put("viaTargetColumn", second.get("column")); rel.put("cardinality", "MANY_TO_MANY"); rel.put("inferenceMethod", "COMPOSITE_PRIMARY_KEY_JOIN_TABLE"); rel.put("evidence", detail); rel.put("reviewRequired", inferredJoin); relations.add(rel);
+                    rel.put("sourceObjectId", firstTarget); rel.put("targetObjectId", secondTarget);
+                    rel.put("sourceColumn", first.get("column")); rel.put("targetColumn", second.get("column"));
+                    rel.put("sourceKeyColumn", first.get("referencedColumn")); rel.put("targetKeyColumn", second.get("referencedColumn"));
+                    rel.put("viaTable", tableName); rel.put("viaObjectId", sourceId);
+                    rel.put("viaSourceColumn", first.get("column")); rel.put("viaTargetColumn", second.get("column"));
+                    rel.put("cardinality", "MANY_TO_MANY"); rel.put("inferenceMethod", "COMPOSITE_PRIMARY_KEY_JOIN_TABLE"); rel.put("evidence", detail); rel.put("reviewRequired", inferredJoin); relations.add(rel);
                     evidence.add(ev("joinTableInference", tableName, detail));
                     if (inferredJoin) { Map<String, Object> association = objectsById.get(sourceId); association.put("kind", "ASSOCIATION"); association.put("associationEvidence", detail); association.put("status", "NEEDS_REVIEW"); }
                 }
@@ -519,6 +620,7 @@ public class OntologyGenerationEngine {
         target.put("actions", candidate.get("actions")); target.put("serviceFlows", candidate.get("serviceFlows"));
         target.put("permissions", candidate.get("permissionCandidates")); target.put("mappings", candidate.get("mappings"));
         target.put("validationRules", candidate.get("validationRules")); target.put("axioms", candidate.get("axioms"));
+        target.put("semanticCatalog", candidate.get("semanticCatalog"));
         target.put("metadata", metadata(candidate));
         return target;
     }

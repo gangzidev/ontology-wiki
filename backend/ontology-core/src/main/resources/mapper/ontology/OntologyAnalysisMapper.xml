@@ -141,7 +141,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     </insert>
 
     <select id="selectTaskDatasource" resultType="java.util.LinkedHashMap">
-        select d.name, d.schema_name, d.db_type
+        select d.name, d.schema_name, d.db_type, d.jdbc_url, d.username, d.password_enc
         from analysis_task t
         left join ontology_datasource d on d.datasource_id = t.source_id
         where t.task_id = #{taskId}

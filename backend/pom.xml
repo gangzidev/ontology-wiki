@@ -218,6 +218,12 @@
                 <version>${ontology.version}</version>
             </dependency>
 
+            <dependency>
+                <groupId>com.ontologywiki</groupId>
+                <artifactId>ontology-query</artifactId>
+                <version>${ontology.version}</version>
+            </dependency>
+
         </dependencies>
     </dependencyManagement>
 
@@ -229,6 +235,7 @@
         <module>ontology-generator</module>
         <module>ontology-common</module>
         <module>ontology-core</module>
+        <module>ontology-query</module>
     </modules>
     <packaging>pom</packaging>
 

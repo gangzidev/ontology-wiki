@@ -74,12 +74,130 @@ public class OntologyProposalService {
      * @throws IllegalStateException    草案不存在或已处理时抛出
      */
     public String complete(long proposalId) {
+        Map<String, Object> proposal = mapper.selectProposal(proposalId);
+        if (proposal == null) {
+            throw new IllegalStateException("草案不存在或已处理，请刷新列表");
+        }
+        if (!STATUS_DRAFT.equalsIgnoreCase(String.valueOf(proposal.get("status")))) {
+            throw new IllegalStateException("草案不存在或已处理，请刷新列表");
+        }
+        try {
+            JsonNode config = json.readTree(String.valueOf(proposal.get("config_json")));
+            List<String> errors = validateCompletionSemantics(config);
+            if (!errors.isEmpty()) {
+                throw new IllegalArgumentException(errors.get(0));
+            }
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalArgumentException("草案暂不能完成：配置不是有效 JSON，请先修正草案。", e);
+        }
         int updated = mapper.completeProposal(proposalId, STATUS_COMPLETED,
                 "", SecurityUtils.getUsername(), STATUS_DRAFT);
         if (updated == 0) {
             throw new IllegalStateException("草案不存在或已处理，请刷新列表");
         }
         return "草案已完成";
+    }
+
+    /** 草案完成前只校验查询所需的指标和维度，评测仍在数据问答阶段执行。 */
+    static List<String> validateCompletionSemantics(JsonNode config) {
+        JsonNode semantics = mergedSemantics(config);
+        JsonNode propertiesNode = config == null ? null : config.path("properties");
+        if (propertiesNode == null || !propertiesNode.isArray() || propertiesNode.isEmpty()) {
+            propertiesNode = config == null ? null : config.path("targetConfig").path("properties");
+        }
+        Map<String, JsonNode> properties = index(propertiesNode);
+        List<String> errors = new ArrayList<>();
+        checkCompletionEntries(semantics, "metrics", properties, errors);
+        checkCompletionEntries(semantics, "dimensions", properties, errors);
+        return errors;
+    }
+
+    private static void checkCompletionEntries(JsonNode semantics, String category,
+                                               Map<String, JsonNode> properties, List<String> errors) {
+        JsonNode entries = semantics.path(category);
+        if (!entries.isArray() || entries.size() == 0) {
+            errors.add("草案暂不能完成：" + ("metrics".equals(category) ? "还没有可统计指标" : "还没有可分组维度")
+                    + "，请进入分析问答的“语义与维度”页签补充" + ("metrics".equals(category) ? "指标" : "维度") + "。");
+            return;
+        }
+        for (int i = 0; i < entries.size(); i++) {
+            JsonNode entry = entries.get(i);
+            String name = text(entry, "name");
+            if (name.isEmpty()) name = "第" + (i + 1) + "项";
+            if (text(entry, "id").isEmpty()) {
+                errors.add("草案暂不能完成：" + ("metrics".equals(category) ? "指标" : "维度") + "“" + name + "”缺少编号，请回分析问答修正。");
+                return;
+            }
+            if (text(entry, "name").isEmpty()) {
+                errors.add("草案暂不能完成：" + ("metrics".equals(category) ? "指标" : "维度") + "缺少名称，请回分析问答修正。");
+                return;
+            }
+            boolean computed = "metrics".equals(category)
+                    && ("COMPUTED".equalsIgnoreCase(text(entry, "type"))
+                    || "COMPUTED".equalsIgnoreCase(text(entry, "aggregation"))
+                    || entry.path("formula").isObject());
+            if (computed) {
+                if (!entry.path("formula").isObject()) {
+                    errors.add("草案暂不能完成：指标“" + name + "”缺少有效计算公式，请回分析问答修正。");
+                }
+                continue;
+            }
+            String propertyId = text(entry, "propertyId");
+            JsonNode property = properties.get(propertyId);
+            boolean mapped = property != null && !text(property, "objectId").isEmpty() && !text(property, "column").isEmpty();
+            if (!mapped) {
+                errors.add("草案暂不能完成：" + ("metrics".equals(category) ? "指标" : "维度") + "“" + name + "”没有绑定有效字段，请回分析问答的“语义与维度”页签修正。");
+                return;
+            }
+            if ("metrics".equals(category)) {
+                String aggregation = text(entry, "aggregation").toUpperCase(Locale.ROOT);
+                if (!Arrays.asList("COUNT", "SUM", "AVG", "MIN", "MAX").contains(aggregation)) {
+                    errors.add("草案暂不能完成：指标“" + name + "”没有有效聚合方式，请回分析问答的“语义与维度”页签修正。");
+                    return;
+                }
+                if (("SUM".equals(aggregation) || "AVG".equals(aggregation))
+                        && !isNumeric(text(property, "dataType"))) {
+                    errors.add("草案暂不能完成：指标“" + name + "”的" + aggregation + "字段必须是数值类型，请回分析问答修正。");
+                    return;
+                }
+            }
+        }
+    }
+
+    private static JsonNode mergedSemantics(JsonNode config) {
+        com.fasterxml.jackson.databind.node.ObjectNode merged = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+        JsonNode target = config == null ? null : config.path("targetConfig");
+        copyObject(target == null ? null : target.path("querySemantics"), merged);
+        copyObject(target == null ? null : target.path("semanticCatalog"), merged);
+        copyObject(config == null ? null : config.path("querySemantics"), merged);
+        copyObject(config == null ? null : config.path("semanticCatalog"), merged);
+        return merged;
+    }
+
+    private static void copyObject(JsonNode source, com.fasterxml.jackson.databind.node.ObjectNode target) {
+        if (source != null && source.isObject()) source.fields().forEachRemaining(entry -> target.set(entry.getKey(), entry.getValue()));
+    }
+
+    private static Map<String, JsonNode> index(JsonNode entries) {
+        Map<String, JsonNode> result = new LinkedHashMap<>();
+        if (entries != null && entries.isArray()) {
+            for (JsonNode entry : entries) {
+                String id = text(entry, "id");
+                if (!id.isEmpty()) result.put(id, entry);
+            }
+        }
+        return result;
+    }
+
+    private static String text(JsonNode node, String field) {
+        JsonNode value = node == null ? null : node.path(field);
+        return value == null || !value.isValueNode() ? "" : value.asText().trim();
+    }
+
+    private static boolean isNumeric(String dataType) {
+        return dataType.toUpperCase(Locale.ROOT).matches(".*\\b(TINYINT|SMALLINT|MEDIUMINT|INT|INTEGER|BIGINT|DECIMAL|NUMERIC|FLOAT|DOUBLE|REAL|NUMBER)\\b.*");
     }
 
     /**

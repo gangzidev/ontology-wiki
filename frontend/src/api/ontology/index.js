@@ -24,6 +24,15 @@ export const listWikiSessions = () => request({ url: '/ontology/wiki/sessions', 
 export const ingestWikiAsset = id => request({ url: `/ontology/wiki/assets/${id}/ingest`, method: 'post', timeout: 180000 })
 export const getWikiMessages = sessionId => request({ url: '/ontology/wiki/messages', method: 'get', params: { sessionId } })
 export const proposalDiff = id => request({ url: `/ontology/proposals/${id}/diff`, method: 'get' })
+// 本体驱动数据查询：服务端先检查准入，只有通过评测的配置才允许只读执行。
+export const getDataQueryReadiness = proposalId => request({ url: `/ontology/data-query/readiness/${proposalId}`, method: 'get' })
+export const planDataQuery = (proposalId, question) => request({ url: `/ontology/data-query/plan/${proposalId}`, method: 'post', data: { question }, timeout: 120000 })
+export const compileDataQuery = (proposalId, plan) => request({ url: `/ontology/data-query/compile/${proposalId}`, method: 'post', data: plan, timeout: 30000 })
+export const evaluateDataQuery = (proposalId, benchmark) => request({ url: `/ontology/data-query/evaluate/${proposalId}`, method: 'post', data: benchmark, timeout: 180000 })
+export const executeDataQuery = (proposalId, plan) => request({ url: `/ontology/data-query/execute/${proposalId}`, method: 'post', data: plan, timeout: 45000 })
+export const askDataQuery = (proposalId, question) => request({ url: `/ontology/data-query/ask/${proposalId}`, method: 'post', data: { question }, timeout: 120000 })
+export const getDataQueryCatalog = proposalId => request({ url: `/ontology/data-query/catalog/${proposalId}`, method: 'get' })
+export const drilldownDataQuery = (proposalId, plan) => request({ url: `/ontology/data-query/drilldown/${proposalId}`, method: 'post', data: plan, timeout: 45000 })
 // 多源模型配置管理
 export const getWikiStatus = () => request({ url: '/ontology/wiki/status', method: 'get' })
 export const listLlmConfigs = () => request({ url: '/ontology/wiki/llm-configs', method: 'get' })

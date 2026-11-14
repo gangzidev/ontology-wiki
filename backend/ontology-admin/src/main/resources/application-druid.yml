@@ -6,16 +6,16 @@ spring:
         druid:
             # 主库数据源
             master:
-                url: ${ONTOLOGY_DB_URL:jdbc:mysql://10.19.38.197:3306/ontology-wiki?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&serverTimezone=Asia/Shanghai}
-                username: ${ONTOLOGY_DB_USERNAME:ontology-wiki}
-                password: ${ONTOLOGY_DB_PASSWORD:}
+                url: jdbc:mysql://182.92.153.153:3309/ontology-wiki?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&serverTimezone=Asia/Shanghai
+                username: ontology-wiki
+                password: T3RbjW4iFLPjhZAB
             # 从库数据源
             slave:
                 # 从数据源开关/默认关闭
                 enabled: false
-                url: 
-                username: 
-                password: 
+                url:
+                username:
+                password:
             # 初始连接数
             initialSize: 5
             # 最小连接池数量
@@ -39,16 +39,16 @@ spring:
             testWhileIdle: true
             testOnBorrow: false
             testOnReturn: false
-            webStatFilter: 
+            webStatFilter:
                 enabled: true
             statViewServlet:
-                enabled: ${DRUID_STAT_ENABLED:false}
+                enabled: false
                 # 设置白名单，不填则允许所有访问
                 allow:
                 url-pattern: /druid/*
                 # 控制台管理用户名和密码
-                login-username: ${DRUID_STAT_USERNAME:ontologywiki}
-                login-password: ${DRUID_STAT_PASSWORD:change-this-password}
+                login-username: ontologywiki
+                login-password: change-this-password
             filter:
                 stat:
                     enabled: true

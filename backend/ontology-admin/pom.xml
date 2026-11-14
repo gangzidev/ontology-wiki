@@ -67,6 +67,11 @@
             <version>${ontology.version}</version>
         </dependency>
 
+        <dependency>
+            <groupId>com.ontologywiki</groupId>
+            <artifactId>ontology-query</artifactId>
+        </dependency>
+
     </dependencies>
 
     <build>

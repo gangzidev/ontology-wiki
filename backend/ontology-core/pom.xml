@@ -17,6 +17,7 @@
         <exclusion><groupId>tomcat</groupId><artifactId>jasper-runtime</artifactId></exclusion>
         <!-- hbase-server -> jetty-runner contributes Jasper 9.4, which conflicts with embedded Tomcat 9.0. -->
         <exclusion><groupId>org.eclipse.jetty</groupId><artifactId>jetty-runner</artifactId></exclusion>
+        <exclusion><groupId>org.apache.logging.log4j</groupId><artifactId>log4j-slf4j-impl</artifactId></exclusion>
       </exclusions>
     </dependency>
   </dependencies>

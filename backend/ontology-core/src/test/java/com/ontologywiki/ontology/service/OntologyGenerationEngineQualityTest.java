@@ -106,8 +106,44 @@ public class OntologyGenerationEngineQualityTest {
         Assert.assertEquals("NEEDS_REVIEW", ((Map<?,?>) ((List<?>) result.get("permissionCandidates")).get(0)).get("status"));
     }
 
+    @Test
+    public void generatesReviewableMetricDimensionAndTimeCandidates() {
+        OntologyGenerationEngine engine = new OntologyGenerationEngine();
+        Map<String,Object> table = new LinkedHashMap<>();
+        table.put("name", "orders"); table.put("comment", "订单"); table.put("primaryKeys", Collections.singletonList("id"));
+        table.put("foreignKeys", Collections.emptyList());
+        table.put("columns", Arrays.asList(columnWithType("id", "BIGINT"), columnWithType("amount", "DECIMAL"),
+                columnWithType("status", "VARCHAR"), columnWithType("created_at", "DATETIME")));
+        table.put("samples", Arrays.asList(sample("id", 1, "amount", 10, "status", "PAID", "created_at", "2026-01-01"),
+                sample("id", 2, "amount", 20, "status", "NEW", "created_at", "2026-01-02")));
+        Map<String,Object> result = engine.generate(schema(table), Collections.<Map<String,Object>>emptyList(),
+                Collections.<Map<String,Object>>emptyList(), Collections.<String>emptyList(), Collections.<Integer>emptySet());
+        Map<?,?> catalog = (Map<?,?>) result.get("semanticCatalog");
+        Map<?,?> amount = find((List<?>) catalog.get("metrics"), "propertyId", "property_orders_amount");
+        Assert.assertEquals("SUM", amount.get("aggregation"));
+        Assert.assertEquals("NEEDS_REVIEW", amount.get("status"));
+        Assert.assertFalse(find((List<?>) catalog.get("dimensions"), "propertyId", "property_orders_status").isEmpty());
+        Assert.assertFalse(find((List<?>) catalog.get("timeDimensions"), "propertyId", "property_orders_created_at").isEmpty());
+        Assert.assertEquals(catalog, ((Map<?,?>) result.get("targetConfig")).get("semanticCatalog"));
+    }
+
     private Map<String,Object> column(String name, String comment, boolean nullable) {
         Map<String,Object> column = new LinkedHashMap<>(); column.put("name", name); column.put("comment", comment); column.put("nullable", nullable); return column;
+    }
+
+    private Map<String,Object> columnWithType(String name, String type) {
+        Map<String,Object> column = new LinkedHashMap<>(); column.put("name", name); column.put("type", type); column.put("nullable", true); return column;
+    }
+
+    private Map<?,?> find(List<?> rows, String key, String value) {
+        for (Object row : rows) if (row instanceof Map && value.equals(String.valueOf(((Map<?,?>) row).get(key)))) return (Map<?,?>) row;
+        return Collections.emptyMap();
+    }
+
+    private Map<String,Object> sample(Object... values) {
+        Map<String,Object> row = new LinkedHashMap<>();
+        for (int i = 0; i + 1 < values.length; i += 2) row.put(String.valueOf(values[i]), values[i + 1]);
+        return row;
     }
 
     private Map<String,Object> schema(Map<String,Object>... tables) {

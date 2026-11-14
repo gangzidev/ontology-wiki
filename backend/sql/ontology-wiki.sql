@@ -820,6 +820,7 @@ INSERT IGNORE INTO sys_menu(menu_id, menu_name, parent_id, order_num, path, comp
 (2003,'数据源管理',    3001,1,'datasource','ontology/datasource/index',NULL,1,0,'C','0','0','ontology:datasources:list','server','admin',NOW()),
 (2004,'分析任务',      3001,2,'analysis', 'ontology/analysis/index', NULL,1,0,'C','0','0','ontology:analyses:list','chart','admin',NOW()),
 (2005,'配置草案',      3001,3,'proposal', 'ontology/proposal/index', NULL,1,0,'C','0','0','ontology:proposals:list','form','admin',NOW()),
+(2092,'数据查询',      3001,4,'data-query','ontology/data-query/index',NULL,1,0,'C','0','0','ontology:proposals:list','monitor','admin',NOW()),
 (2090,'模型配置',      3002,1,'settings', 'ontology/settings/index', NULL,1,0,'C','0','0','ontology:llm:list','skill','admin',NOW()),
 (2091,'MCP Token',     3002,2,'mcp',      'ontology/settings/mcp',   NULL,1,0,'C','0','0','ontology:llm:list','lock','admin',NOW());
 
@@ -846,11 +847,13 @@ INSERT IGNORE INTO sys_menu(menu_id, menu_name, parent_id, order_num, path, comp
 (2062,'空间删除',2007,3,'','','1',0,'F','1','0','ontology:spaces:remove','', 'admin',NOW()),
 (2070,'空间查询',2007,4,'','','1',0,'F','1','0','ontology:spaces:query','', 'admin',NOW()),
 (2080,'大模型设置',2008,1,'','','1',0,'F','1','0','ontology:wiki:settings','', 'admin',NOW());
+INSERT IGNORE INTO sys_menu(menu_id, menu_name, parent_id, order_num, path, component, is_frame, is_cache, menu_type, visible, status, perms, icon, create_by, create_time) VALUES
+(2093,'数据查询执行',2092,1,'','','1',0,'F','1','0','ontology:proposals:query','', 'admin',NOW());
 
 -- 授权：
 --   超级管理员（role 1，代码内 isAdmin 直接放行）持有业务菜单；
 --   普通角色（role 2）沿用框架脚本的授权范围，只需补「平台运维」目录，
 --   否则其下的系统管理/系统监控/系统工具会因父节点缺失而无法构建菜单树。
 INSERT IGNORE INTO sys_role_menu(role_id, menu_id)
-SELECT 1, menu_id FROM sys_menu WHERE menu_id IN (3000,3001,3002) OR menu_id BETWEEN 2000 AND 2091;
+SELECT 1, menu_id FROM sys_menu WHERE menu_id IN (3000,3001,3002) OR menu_id BETWEEN 2000 AND 2093;
 INSERT IGNORE INTO sys_role_menu(role_id, menu_id) VALUES (2, 3003);

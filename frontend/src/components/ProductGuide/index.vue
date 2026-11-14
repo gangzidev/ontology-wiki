@@ -1,11 +1,15 @@
 <template>
   <div>
     <el-button
+      ref="trigger"
       class="product-guide-trigger"
+      :class="{ 'is-dragging': dragging }"
+      :style="triggerStyle"
       type="primary"
       icon="el-icon-reading"
       aria-label="打开产品使用教程"
-      @click="openGuide"
+      title="点击打开教程，按住可拖动"
+      @click="handleTriggerClick"
     >使用教程</el-button>
 
     <el-dialog
@@ -50,6 +54,11 @@ export default {
     return {
       visible: false,
       activeStep: 0,
+      triggerPosition: { left: null, top: null },
+      dragging: false,
+      dragMoved: false,
+      dragStart: null,
+      triggerEl: null,
       // 教程按平台的日常工作流程组织，便于首次使用时逐步浏览。
       steps: [
         {
@@ -98,7 +107,30 @@ export default {
     }
   },
   mounted() {
+    this.restoreTriggerPosition()
     this.showForFirstLogin()
+    const trigger = this.$refs.trigger
+    this.triggerEl = trigger && trigger.$el ? trigger.$el : trigger
+    if (this.triggerEl) this.triggerEl.addEventListener('pointerdown', this.startDrag)
+    window.addEventListener('resize', this.keepTriggerInViewport)
+  },
+  beforeDestroy() {
+    this.removeDragListeners()
+    if (this.triggerEl) this.triggerEl.removeEventListener('pointerdown', this.startDrag)
+    window.removeEventListener('resize', this.keepTriggerInViewport)
+  },
+  computed: {
+    triggerStyle() {
+      if (this.triggerPosition.left == null || this.triggerPosition.top == null) {
+        return { right: '24px', bottom: '84px' }
+      }
+      return {
+        left: `${this.triggerPosition.left}px`,
+        top: `${this.triggerPosition.top}px`,
+        right: 'auto',
+        bottom: 'auto'
+      }
+    }
   },
   methods: {
     // 首次显示时立即记为已看过，之后可通过右下角入口再次打开。
@@ -116,6 +148,73 @@ export default {
     openGuide() {
       this.activeStep = 0
       this.visible = true
+    },
+    restoreTriggerPosition() {
+      try {
+        const saved = JSON.parse(window.localStorage.getItem('ontologywiki:product-guide-position:v1') || 'null')
+        if (saved && Number.isFinite(saved.left) && Number.isFinite(saved.top)) {
+          this.triggerPosition = { left: saved.left, top: saved.top }
+          this.$nextTick(this.keepTriggerInViewport)
+        }
+      } catch (error) {
+        // 本地位置损坏时回退到默认位置。
+      }
+    },
+    startDrag(event) {
+      if (!event.isPrimary || event.button !== 0) return
+      const rect = this.triggerEl.getBoundingClientRect()
+      this.dragging = true
+      this.dragMoved = false
+      this.dragStart = { x: event.clientX, y: event.clientY, left: rect.left, top: rect.top }
+      window.addEventListener('pointermove', this.onDragMove)
+      window.addEventListener('pointerup', this.stopDrag)
+      window.addEventListener('pointercancel', this.stopDrag)
+    },
+    onDragMove(event) {
+      if (!this.dragging || !this.dragStart) return
+      const dx = event.clientX - this.dragStart.x
+      const dy = event.clientY - this.dragStart.y
+      if (!this.dragMoved && Math.abs(dx) + Math.abs(dy) < 5) return
+      this.dragMoved = true
+      const trigger = this.triggerEl
+      if (!trigger) return
+      const maxLeft = Math.max(8, window.innerWidth - trigger.offsetWidth - 8)
+      const maxTop = Math.max(8, window.innerHeight - trigger.offsetHeight - 8)
+      this.triggerPosition = {
+        left: Math.min(maxLeft, Math.max(8, this.dragStart.left + dx)),
+        top: Math.min(maxTop, Math.max(8, this.dragStart.top + dy))
+      }
+    },
+    stopDrag() {
+      if (!this.dragging) return
+      this.dragging = false
+      this.dragStart = null
+      this.removeDragListeners()
+      if (this.triggerPosition.left != null) {
+        try { window.localStorage.setItem('ontologywiki:product-guide-position:v1', JSON.stringify(this.triggerPosition)) } catch (error) {}
+      }
+    },
+    removeDragListeners() {
+      window.removeEventListener('pointermove', this.onDragMove)
+      window.removeEventListener('pointerup', this.stopDrag)
+      window.removeEventListener('pointercancel', this.stopDrag)
+    },
+    keepTriggerInViewport() {
+      const trigger = this.triggerEl
+      if (!trigger || this.triggerPosition.left == null) return
+      const maxLeft = Math.max(8, window.innerWidth - trigger.offsetWidth - 8)
+      const maxTop = Math.max(8, window.innerHeight - trigger.offsetHeight - 8)
+      this.triggerPosition = {
+        left: Math.min(maxLeft, Math.max(8, this.triggerPosition.left)),
+        top: Math.min(maxTop, Math.max(8, this.triggerPosition.top))
+      }
+    },
+    handleTriggerClick() {
+      if (this.dragMoved) {
+        this.dragMoved = false
+        return
+      }
+      this.openGuide()
     },
     previousStep() {
       if (this.activeStep > 0) this.activeStep -= 1
@@ -136,11 +235,20 @@ export default {
 <style lang="scss" scoped>
 .product-guide-trigger {
   position: fixed;
-  right: 28px;
-  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  right: 24px;
+  bottom: 84px;
   z-index: 1001;
-  border-radius: 22px;
-  box-shadow: 0 6px 18px rgba(47, 136, 255, .28);
+  border-radius: 6px;
+  border-color: #0075de;
+  background: #0075de;
+  box-shadow: 0 5px 14px rgba(0, 117, 222, .2);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.product-guide-trigger.is-dragging {
+  cursor: grabbing;
+  box-shadow: 0 10px 24px rgba(0, 117, 222, .28);
 }
 
 .guide-content { min-height: 230px; }
@@ -154,7 +262,7 @@ export default {
 .guide-count { color: #98a2b3; font-size: 13px; }
 
 @media (max-width: 600px) {
-  .product-guide-trigger { right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
+  .product-guide-trigger { right: 16px; bottom: 72px; }
   .guide-content { min-height: 270px; }
   .guide-step { padding: 24px 0 8px; }
 }

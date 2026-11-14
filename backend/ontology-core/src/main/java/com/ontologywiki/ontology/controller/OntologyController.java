@@ -660,6 +660,7 @@ public class OntologyController extends BaseController {
             if (wikiResponse.containsKey("pageTitle")) result.put("pageTitle", wikiResponse.get("pageTitle"));
             if (wikiResponse.containsKey("analysisConfig")) result.put("analysisConfig", wikiResponse.get("analysisConfig"));
             if (wikiResponse.containsKey("analysisChanges")) result.put("analysisChanges", wikiResponse.get("analysisChanges"));
+            if (wikiResponse.containsKey("analysisPendingChanges")) result.put("analysisPendingChanges", wikiResponse.get("analysisPendingChanges"));
             if (wikiResponse.containsKey("analysisUpdatedChanges")) result.put("analysisUpdatedChanges", wikiResponse.get("analysisUpdatedChanges"));
             return AjaxResult.success(result);
         }

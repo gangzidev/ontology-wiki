@@ -67,10 +67,10 @@ spring:
       enabled: true
   # redis 配置
   redis:
-    host: ${REDIS_HOST:10.19.38.197}
-    port: ${REDIS_PORT:6379}
-    database: ${REDIS_DATABASE:11}
-    password: ${REDIS_PASSWORD:}
+    host: 182.92.153.153
+    port: 7379
+    database: 11
+    password: rdsasdf1234
     # 连接超时时间
     timeout: 10s
     lettuce:
@@ -87,33 +87,33 @@ spring:
 # 外部系统集成。除非设置对应的 enabled=true 和密钥，否则不会发起外呼。
 ontology:
   integration:
-    credential-key: ${ONTOLOGY_CREDENTIAL_KEY:change-this-credential-key-in-production}
+    credential-key: f4c09298ae3d6c9b4869f386366e3803e53f5d1a207e47c8d4372f472fc4a9ed
     # 本地 MySQL 持久化 Wiki；仅通过 OpenAI 兼容 API 调用模型。
     llm-wiki:
-      enabled: ${LLM_WIKI_ENABLED:true}
+      enabled: true
       # 内置 Wiki 不依赖外部 Wiki 客户端；仅调用 OpenAI 兼容模型接口。
-      api-base-url: ${LLM_API_BASE_URL:https://fast.sbbbbbbbbb.xyz/v1}
-      api-key: ${LLM_API_KEY:}
-      model: ${LLM_MODEL:gpt-6-sol}
-      connect-timeout-ms: ${LLM_WIKI_CONNECT_TIMEOUT_MS:5000}
-      read-timeout-ms: ${LLM_WIKI_READ_TIMEOUT_MS:120000}
+      api-base-url: https://fast.sbbbbbbbbb.xyz/v1
+      api-key: sk-l0evc6pAk1m43L0Sb1MLlaY7DKJBixdInMp2Ar31V1BraQQH
+      model: gpt-6-sol
+      connect-timeout-ms: 5000
+      read-timeout-ms: 120000
     zhiwen:
-      enabled: ${ONTOLOGY_ZHIWEN_ENABLED:false}
-      base-url: ${ONTOLOGY_ZHIWEN_BASE_URL:}
-      type: ${ONTOLOGY_ZHIWEN_TYPE:bot}
-      agent-code: ${ONTOLOGY_ZHIWEN_AGENT_CODE:}
-      workflow-id: ${ONTOLOGY_ZHIWEN_WORKFLOW_ID:}
-      user-id: ${ONTOLOGY_ZHIWEN_USER_ID:ontology-wiki}
-      tenant-id: ${ONTOLOGY_ZHIWEN_TENANT_ID:test}
-      source: ${ONTOLOGY_ZHIWEN_SOURCE:ONTOLOGY_WIKI}
-      secret-id: ${ONTOLOGY_ZHIWEN_SECRET_ID:}
-      secret-key: ${ONTOLOGY_ZHIWEN_SECRET_KEY:}
-      path: ${ONTOLOGY_ZHIWEN_PATH:/ais/channel/openapi/message/syncAuthChat}
+      enabled: false
+      base-url:
+      type: bot
+      agent-code:
+      workflow-id:
+      user-id: ontology-wiki
+      tenant-id: test
+      source: ONTOLOGY_WIKI
+      secret-id:
+      secret-key:
+      path: /ais/channel/openapi/message/syncAuthChat
     platform:
-      enabled: ${ONTOLOGY_PLATFORM_ENABLED:false}
-      base-url: ${ONTOLOGY_PLATFORM_BASE_URL:}
-      token: ${ONTOLOGY_PLATFORM_TOKEN:}
-      import-path: ${ONTOLOGY_PLATFORM_IMPORT_PATH:}
+      enabled: false
+      base-url:
+      token:
+      import-path:
       # 仅设置指向专用测试环境的地址；接口契约须由目标平台提供。
 
 # token配置
@@ -121,7 +121,7 @@ token:
   # 令牌自定义标识
   header: Authorization
   # 令牌密钥
-  secret: ${ONTOLOGY_TOKEN_SECRET:change-this-token-secret-in-production}
+  secret: b65fa4d3190f70aed3f1b5c9efb10a0431dbdca611290ef1fcf7709186ff891b
   # 令牌有效期（默认30分钟）
   expireTime: 30
 
