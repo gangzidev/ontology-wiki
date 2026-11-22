@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ontologywiki.ontology.mapper.AnalysisJobMapper">
+    <resultMap id="JobResult" type="java.util.LinkedHashMap">
+        <id property="taskId" column="task_id" javaType="java.lang.Long" />
+        <result property="runToken" column="run_token" javaType="java.lang.String" />
+        <result property="status" column="status" javaType="java.lang.String" />
+        <result property="stage" column="stage" javaType="java.lang.String" />
+        <result property="requestJson" column="request_json" javaType="java.lang.String" />
+        <result property="checkpointJson" column="checkpoint_json" javaType="java.lang.String" />
+        <result property="username" column="username" javaType="java.lang.String" />
+        <result property="message" column="message" javaType="java.lang.String" />
+        <result property="leaseUntil" column="lease_until" javaType="java.lang.Long" />
+        <result property="modelCalls" column="model_calls" javaType="java.lang.Integer" />
+        <result property="proposalId" column="proposal_id" javaType="java.lang.Long" />
+    </resultMap>
+    <resultMap id="TaskResult" type="java.util.LinkedHashMap">
+        <id property="taskId" column="task_id" javaType="java.lang.Long" />
+        <result property="taskName" column="task_name" javaType="java.lang.String" />
+        <result property="status" column="status" javaType="java.lang.String" />
+    </resultMap>
+    <select id="lockTask" resultMap="TaskResult">
+        select task_id, task_name, status from analysis_task where task_id = #{taskId} for update
+    </select>
+    <select id="selectJob" resultMap="JobResult">
+        select * from ontology_analysis_job where task_id = #{taskId}
+    </select>
+    <select id="lockJob" resultMap="JobResult">
+        select * from ontology_analysis_job where task_id = #{taskId} for update
+    </select>
+    <insert id="insertJob">
+        insert into ontology_analysis_job
+            (task_id, run_token, status, stage, request_json, checkpoint_json, username, message, lease_until, model_calls, created_at, updated_at)
+        values
+            (#{taskId}, #{runToken}, 'RUNNING', #{stage}, #{requestJson}, #{checkpointJson}, #{username}, #{message}, #{leaseUntil}, 0, current_timestamp, current_timestamp)
+    </insert>
+    <update id="claimJob">
+        update ontology_analysis_job set run_token = #{runToken}, status = 'RUNNING', stage = #{stage},
+            request_json = #{requestJson}, checkpoint_json = #{checkpointJson}, username = #{username},
+            message = #{message}, lease_until = #{leaseUntil}, model_calls = 0, proposal_id = null, updated_at = current_timestamp
+        where task_id = #{taskId}
+    </update>
+    <update id="checkpoint">
+        update ontology_analysis_job set stage = #{stage}, checkpoint_json = #{checkpointJson}, message = #{message},
+            lease_until = #{leaseUntil}, model_calls = #{modelCalls}, updated_at = current_timestamp
+        where task_id = #{taskId} and run_token = #{runToken} and status = 'RUNNING' and lease_until &gt; #{now}
+    </update>
+    <update id="finish">
+        update ontology_analysis_job set status = #{status}, message = #{message}, proposal_id = #{proposalId}, updated_at = current_timestamp
+        where task_id = #{taskId} and run_token = #{runToken} and status = 'RUNNING'
+    </update>
+    <update id="updateTask">
+        update analysis_task set status = #{status}, summary = #{message}, update_by = #{username}, update_time = current_timestamp
+        where task_id = #{taskId}
+    </update>
+</mapper>

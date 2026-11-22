@@ -48,7 +48,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         select session_id sessionId, space_id spaceId, scope_type scopeType,
                scope_id scopeId, title, update_time updatedAt
         from wiki_chat_session
-        where created_by = #{username}
+        where created_by = #{username} and scope_type != 'DATA_QUERY'
         order by update_time desc
         limit #{limit}
     </select>
@@ -58,6 +58,10 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     <select id="selectRecentMessages" resultType="java.util.LinkedHashMap">
         select role, content from wiki_chat_message
         where session_id = #{sessionId} and created_by = #{username}
+          and exists (select 1 from wiki_chat_session session
+                      where session.session_id = wiki_chat_message.session_id
+                        and session.created_by = wiki_chat_message.created_by
+                        and session.scope_type != 'DATA_QUERY')
         order by message_id desc
         limit #{limit}
     </select>
@@ -76,6 +80,10 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         select message_id, role, content, create_time
         from wiki_chat_message
         where session_id = #{sessionId} and created_by = #{username}
+          and exists (select 1 from wiki_chat_session session
+                      where session.session_id = wiki_chat_message.session_id
+                        and session.created_by = wiki_chat_message.created_by
+                        and session.scope_type != 'DATA_QUERY')
         order by message_id desc
         limit #{limit}
     </select>

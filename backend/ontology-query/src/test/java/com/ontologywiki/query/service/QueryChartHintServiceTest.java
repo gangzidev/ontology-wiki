@@ -1,5 +1,6 @@
 package com.ontologywiki.query.service;
 
+import com.ontologywiki.query.presentation.QueryChartHintService;
 import org.junit.Assert;
 import org.junit.Test;
 

@@ -165,6 +165,7 @@
         </div>
 
         <!-- 已选字段工具条 -->
+        <el-alert v-if="analysisConfig.semanticNamingReport && analysisConfig.semanticNamingReport.unresolved" :title="analysisConfig.semanticNamingReport.unresolved + ' 项中文业务名称尚未生成，请补充资料重新分析或在问答中修正。'" type="warning" :closable="false" show-icon />
         <div v-if="selectedAnalysisField" class="selected-field-bar">
           <span>已选：{{ selectedFieldLabel }}</span>
           <el-button size="mini" type="primary" plain icon="el-icon-chat-dot-round" @click="askAboutSelectedField">
@@ -257,7 +258,7 @@
             <strong class="query-semantics-title">指标</strong>
             <el-table ref="table-metrics" :data="rowsForCategory('metrics')" :height="Math.max(110, Math.floor(analysisTableHeight / 2) - 25)" size="mini" :row-class-name="row => analysisRowClass('metrics', row)" empty-text="暂无指标候选">
               <el-table-column label="名称" min-width="130"><template slot-scope="s"><el-tag v-if="analysisRowChanged('metrics', s.row)" size="mini" type="success">已修正</el-tag>{{ s.row.name }}</template></el-table-column>
-              <el-table-column prop="aggregation" label="聚合方式" width="100" />
+              <el-table-column label="聚合方式" width="100"><template slot-scope="s">{{ aggregationText(s.row.aggregation) }}</template></el-table-column>
               <el-table-column label="映射字段" min-width="150"><template slot-scope="s">{{ analysisSemanticPropertyName(s.row.propertyId) }}</template></el-table-column>
               <el-table-column prop="definition" label="口径说明" min-width="180" show-overflow-tooltip />
             </el-table>
@@ -1244,6 +1245,10 @@ export default {
       return row ? this.analysisPropertyLabel(row) + (row.column ? `（${row.column}）` : '') : (id || '未关联字段')
     },
 
+    aggregationText(value) {
+      return ({ COUNT: '计数', SUM: '求和', AVG: '平均值', MIN: '最小值', MAX: '最大值' })[String(value || '').toUpperCase()] || value || '—'
+    },
+
     /** 判断某行是否已被修正 */
     analysisRowChanged(category, row) {
       return (this.analysisConfig.analysisCorrections || []).some(change => change.category === category && String(change.id) === String(row && row.id))
@@ -1398,7 +1403,8 @@ export default {
           confirm: true,
           proposalId: Number(this.proposalId),
           analysisChanges: this.analysisChanges,
-        }).then(() => {
+        }).then(({ data }) => {
+          if (data && data.proposalId) this.proposalId = String(data.proposalId)
           this.analysisConfig.answerStatus = ANSWER_STATUS.CONFIRMED
           this.analysisConfig.llmAnswer = answer
           this.analysisSavedCorrections = this.cloneData(this.analysisConfig.analysisCorrections || [])

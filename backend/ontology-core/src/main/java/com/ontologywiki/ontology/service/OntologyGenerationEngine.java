@@ -247,7 +247,6 @@ public class OntologyGenerationEngine {
             for (Map<String, Object> column : list(profile.get("columns"))) columns.put(text(column.get("column")), text(column.get("cardinality")));
             profiles.put(text(profile.get("key")).toLowerCase(Locale.ROOT), columns);
         }
-        Set<String> metricObjects = new HashSet<>();
         for (Map<String, Object> property : properties.values()) {
             String propertyId = text(property.get("id")), column = text(property.get("column"));
             String type = text(property.get("dataType")); type = type == null ? "" : type.toUpperCase(Locale.ROOT);
@@ -255,21 +254,25 @@ public class OntologyGenerationEngine {
             Map<String, Object> object = objects.get(text(property.get("objectId")));
             String tableName = text(object == null ? null : object.get("table"));
             String physicalKey = object == null ? "" : tableKey(object).toLowerCase(Locale.ROOT);
-            String name = text(property.get("name"));
+            String name = OntologyFieldSemantics.displayName(text(property.get("name")));
             Map<String, Object> sourceEvidence = new LinkedHashMap<>();
             sourceEvidence.put("table", tableName); sourceEvidence.put("column", column); sourceEvidence.put("dataType", type);
             sourceEvidence.put("source", "schema.property");
 
-            if (isTimeType(type) || isTimeName(columnName)) {
+            if (!isTimeType(type) && OntologyFieldSemantics.isCategorical(columnName, type, text(property.get("name")))) {
+                Map<String, Object> candidate = semanticCandidate("dimension", property, name, null, 0.78, sourceEvidence);
+                candidate.put("definition", property.get("name"));
+                dimensions.add(candidate);
+                evidence.add(ev("query.dimension", propertyId, "状态、枚举或布尔标志作为分组与过滤字段"));
+            } else if (isTimeType(type) || isTimeName(columnName)) {
                 Map<String, Object> candidate = semanticCandidate("time-dimension", property, name, null, 0.78, sourceEvidence);
                 candidate.put("granularities", Arrays.asList("DAY", "WEEK", "MONTH", "QUARTER", "YEAR"));
                 timeDimensions.add(candidate);
                 evidence.add(ev("query.timeDimension", propertyId, "日期或时间字段可作为时间维度候选"));
-            } else if (isNumericType(type)) {
-                String aggregation = isIdentifierName(columnName) ? "COUNT" : isAverageName(columnName) ? "AVG" : "SUM";
+            } else if (isNumericType(type) && !isIdentifierName(columnName)) {
+                String aggregation = isAverageName(columnName) ? "AVG" : "SUM";
                 Map<String, Object> candidate = semanticCandidate("metric", property, name, aggregation, 0.68, sourceEvidence);
                 candidate.put("definition", name + ("COUNT".equals(aggregation) ? "数量" : "合计")); metrics.add(candidate);
-                metricObjects.add(text(property.get("objectId")));
                 evidence.add(ev("query.metric", propertyId, "数值字段可作为" + aggregation + "指标候选"));
             } else if (isDimensionType(type) || isEnumName(columnName)) {
                 Map<String, String> columns = profiles.get(physicalKey);
@@ -281,9 +284,7 @@ public class OntologyGenerationEngine {
                 }
             }
         }
-        // 没有数值字段的对象仍可按主键计数。
         for (Map<String, Object> object : objects.values()) {
-            if (metricObjects.contains(text(object.get("id")))) continue;
             String key = tableKey(object), primaryKey = null;
             for (Map<String, Object> table : tables) if (key.equals(tableKey(table)) && !strings(table.get("primaryKeys")).isEmpty()) { primaryKey = strings(table.get("primaryKeys")).get(0); break; }
             if (primaryKey == null) continue;

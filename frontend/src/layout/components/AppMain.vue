@@ -1,5 +1,5 @@
 <template>
-  <section class="app-main">
+  <section class="app-main" :class="{ 'query-workspace': isDataQuery }">
     <transition name="fade-transform" mode="out-in">
       <keep-alive :include="cachedViews">
         <router-view v-if="!$route.meta.link" :key="key" />
@@ -18,6 +18,9 @@ export default {
   name: 'AppMain',
   components: { iframeToggle, copyright },
   computed: {
+    isDataQuery() {
+      return this.$route.path.endsWith('/data-query')
+    },
     cachedViews() {
       return this.$store.state.tagsView.cachedViews
     },
@@ -112,6 +115,25 @@ export default {
       height: calc(100dvh - 106px);
     }
   }
+}
+.app-main.query-workspace {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 64px);
+  height: calc(100dvh - 64px);
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.hasTagsView .app-main.query-workspace {
+  height: calc(100vh - 106px);
+  height: calc(100dvh - 106px);
+  min-height: 0;
+}
+
+.app-main.query-workspace:has(.copyright) {
+  padding-bottom: 36px;
 }
 </style>
 

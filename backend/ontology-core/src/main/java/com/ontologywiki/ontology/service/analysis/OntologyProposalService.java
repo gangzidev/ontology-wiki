@@ -100,7 +100,24 @@ public class OntologyProposalService {
         return "草案已完成";
     }
 
-    /** 草案完成前只校验查询所需的指标和维度，评测仍在数据问答阶段执行。 */
+    /** 从指定历史版本创建一个新的待修正草案，保留当前版本并可继续编辑。 */
+    public long rollbackToVersion(long proposalId) {
+        Map<String, Object> source = mapper.selectProposal(proposalId);
+        if (source == null || source.get("task_id") == null || source.get("config_json") == null) {
+            throw new IllegalArgumentException("历史草案不存在或配置为空");
+        }
+        Map<String, Object> params = new HashMap<>();
+        params.put("taskId", ((Number) source.get("task_id")).longValue());
+        params.put("proposalName", "回退版本 - " + String.valueOf(source.get("proposal_name")));
+        params.put("configJson", String.valueOf(source.get("config_json")));
+        params.put("username", SecurityUtils.getUsername());
+        mapper.insertProposal(params);
+        Object generatedId = params.get("generatedId");
+        if (!(generatedId instanceof Number)) throw new IllegalStateException("回退草案创建失败");
+        return ((Number) generatedId).longValue();
+    }
+
+    /** 草案完成前校验指标及可选维度，质量评测由配置管理员独立执行。 */
     static List<String> validateCompletionSemantics(JsonNode config) {
         JsonNode semantics = mergedSemantics(config);
         JsonNode propertiesNode = config == null ? null : config.path("properties");
@@ -109,7 +126,15 @@ public class OntologyProposalService {
         }
         Map<String, JsonNode> properties = index(propertiesNode);
         List<String> errors = new ArrayList<>();
-        checkCompletionEntries(semantics, "metrics", properties, errors);
+        JsonNode metrics = semantics.path("metrics");
+        boolean noMetrics = metrics.isMissingNode() || metrics.isNull() || (metrics.isArray() && metrics.size() == 0);
+        Map<String, JsonNode> objects = index(config == null ? null : config.path("objects"));
+        boolean detailAvailable = false;
+        for (JsonNode property : properties.values()) {
+            JsonNode object = objects.get(text(property, "objectId"));
+            if (object != null && !text(object, "table").isEmpty() && !text(property, "column").isEmpty()) { detailAvailable = true; break; }
+        }
+        if (!noMetrics || !detailAvailable) checkCompletionEntries(semantics, "metrics", properties, errors);
         checkCompletionEntries(semantics, "dimensions", properties, errors);
         return errors;
     }
@@ -117,6 +142,8 @@ public class OntologyProposalService {
     private static void checkCompletionEntries(JsonNode semantics, String category,
                                                Map<String, JsonNode> properties, List<String> errors) {
         JsonNode entries = semantics.path(category);
+        if ("dimensions".equals(category) && (entries.isMissingNode() || entries.isNull()
+                || (entries.isArray() && entries.size() == 0))) return;
         if (!entries.isArray() || entries.size() == 0) {
             errors.add("草案暂不能完成：" + ("metrics".equals(category) ? "还没有可统计指标" : "还没有可分组维度")
                     + "，请进入分析问答的“语义与维度”页签补充" + ("metrics".equals(category) ? "指标" : "维度") + "。");

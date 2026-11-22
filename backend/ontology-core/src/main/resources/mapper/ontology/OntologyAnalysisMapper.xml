@@ -12,7 +12,16 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
 
     <!-- ==================== 分析任务 ==================== -->
 
-    <select id="selectTask" resultType="java.util.LinkedHashMap">
+    <resultMap id="AnalysisTaskResult" type="java.util.LinkedHashMap">
+        <id property="task_id" column="task_id" javaType="java.lang.Long" />
+        <result property="source_id" column="source_id" javaType="java.lang.Long" />
+        <result property="wiki_space_id" column="wiki_space_id" javaType="java.lang.Long" />
+        <result property="task_name" column="task_name" javaType="java.lang.String" />
+        <result property="scope" column="scope" javaType="java.lang.String" />
+        <result property="summary" column="summary" javaType="java.lang.String" />
+        <result property="status" column="status" javaType="java.lang.String" />
+    </resultMap>
+    <select id="selectTask" resultMap="AnalysisTaskResult">
         select * from analysis_task where task_id = #{taskId}
     </select>
 
@@ -103,8 +112,11 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     </select>
 
     <select id="selectTaskContext" resultType="java.util.LinkedHashMap">
-        select t.task_id, t.summary, p.proposal_id, p.config_json
+        select t.task_id, t.task_name, t.summary, t.source_id, t.wiki_space_id,
+               d.name as datasource_name, s.space_name, p.proposal_id, p.config_json
         from analysis_task t
+        left join ontology_datasource d on d.datasource_id = t.source_id
+        left join wiki_space s on s.space_id = t.wiki_space_id
         left join ontology_proposal p on p.proposal_id = (
             select p2.proposal_id from ontology_proposal p2
             where p2.task_id = t.task_id
@@ -115,8 +127,11 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     </select>
 
     <select id="selectTaskContextByProposal" resultType="java.util.LinkedHashMap">
-        select t.task_id, t.summary, p.proposal_id, p.config_json
+        select t.task_id, t.task_name, t.summary, t.source_id, t.wiki_space_id,
+               d.name as datasource_name, s.space_name, p.proposal_id, p.config_json
         from analysis_task t
+        left join ontology_datasource d on d.datasource_id = t.source_id
+        left join wiki_space s on s.space_id = t.wiki_space_id
         join ontology_proposal p on p.task_id = t.task_id and p.proposal_id = #{proposalId}
         where t.task_id = #{taskId}
     </select>
@@ -141,7 +156,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     </insert>
 
     <select id="selectTaskDatasource" resultType="java.util.LinkedHashMap">
-        select d.name, d.schema_name, d.db_type, d.jdbc_url, d.username, d.password_enc
+        select d.name, d.schema_name, d.db_type, d.host, d.port, d.database_name, d.jdbc_url, d.username, d.password_enc
         from analysis_task t
         left join ontology_datasource d on d.datasource_id = t.source_id
         where t.task_id = #{taskId}

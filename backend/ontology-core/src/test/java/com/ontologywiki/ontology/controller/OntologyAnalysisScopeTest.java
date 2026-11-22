@@ -27,23 +27,24 @@ public class OntologyAnalysisScopeTest {
         task.put("source_id", 10L);
         task.put("wiki_space_id", null);
 
-        OntologyController controller = new OntologyController(null, null, null, null, null, null, null,
-                null, analysisMapperReturningTask(task), null, null, null, null);
-
-        AjaxResult result = controller.analyze(1L, Collections.<String, String>emptyMap());
-
-        Assert.assertTrue(String.valueOf(result.get("msg")).contains("未绑定行业知识空间"));
+        com.ontologywiki.ontology.service.analysis.AnalysisJobServiceImpl service = new com.ontologywiki.ontology.service.analysis.AnalysisJobServiceImpl(null, null, null, null, null, analysisMapperReturningTask(task), null, new com.fasterxml.jackson.databind.ObjectMapper(), null, null, null);
+        try {
+            service.start(1L, Collections.<String, String>emptyMap(), "tester");
+            Assert.fail("Expected validation failure");
+        } catch (IllegalArgumentException expected) {
+            Assert.assertTrue(expected.getMessage().contains("未绑定行业知识空间"));
+        }
     }
 
     @Test
     public void sqlLinesInTaskScopeBecomeNonExecutingQueryPatterns() {
         String scope = "业务重点\nSELECT * FROM orders\nUPDATE orders SET status='PAID'\n只读客户信息";
-        List<String> patterns = OntologyController.queryPatternsFromScope(scope);
+        List<String> patterns = com.ontologywiki.ontology.service.analysis.AnalysisInput.queryPatternsFromScope(scope);
 
         Assert.assertEquals(2, patterns.size());
         Assert.assertEquals("SELECT * FROM orders", patterns.get(0));
         Assert.assertTrue(patterns.get(1).startsWith("UPDATE"));
-        Assert.assertEquals("业务重点\n只读客户信息", OntologyController.scopeForPrompt(scope));
+        Assert.assertEquals("业务重点\n只读客户信息", com.ontologywiki.ontology.service.analysis.AnalysisInput.scopeForPrompt(scope));
     }
 
     /** 构造只实现 selectTask 的 Mapper 桩，其余方法一旦被调用即失败。 */

@@ -95,7 +95,7 @@ public final class OntologyResource {
     }
 
     /**
-     * 拼接列表查询所需的完整列集合：主键、业务列、草案完成记录与审计列。
+     * 拼接详情查询所需的完整列集合：主键、业务列、草案完成记录与审计列。
      *
      * @return 逗号分隔的列名
      */
@@ -106,6 +106,17 @@ public final class OntologyResource {
             sql.append(",review_by,review_time,review_comment");
         }
         return sql.append(",create_time,update_by,update_time").toString();
+    }
+
+    /**
+     * 列表只返回草案摘要，完整配置通过详情接口按需读取。
+     */
+    public String listSelectColumns() {
+        Set<String> selected = new LinkedHashSet<>(Arrays.asList(selectColumns().split(",")));
+        if ("proposals".equals(key)) {
+            selected.remove("config_json");
+        }
+        return String.join(",", selected);
     }
 
     /**

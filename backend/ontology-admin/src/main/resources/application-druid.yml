@@ -6,6 +6,8 @@ spring:
         druid:
             # 主库数据源
             master:
+                # 远程数据库的大 JSON 使用驱动协议压缩，减少传输耗时。
+                connectionProperties: useCompression=true
                 url: jdbc:mysql://182.92.153.153:3309/ontology-wiki?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&serverTimezone=Asia/Shanghai
                 username: ontology-wiki
                 password: T3RbjW4iFLPjhZAB

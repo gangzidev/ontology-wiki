@@ -1,6 +1,6 @@
 package com.ontologywiki.query.repository;
 
-import com.ontologywiki.ontology.mapper.OntologyAnalysisMapper;
+import com.ontologywiki.query.mapper.QueryConfigurationMapper;
 import org.springframework.stereotype.Repository;
 
 import java.util.Map;
@@ -8,9 +8,9 @@ import java.util.Map;
 /** 查询配置仓储，只负责读取本体配置，不在查询模块修改草案。 */
 @Repository
 public class QueryConfigurationRepository {
-    private final OntologyAnalysisMapper mapper;
+    private final QueryConfigurationMapper mapper;
 
-    public QueryConfigurationRepository(OntologyAnalysisMapper mapper) {
+    public QueryConfigurationRepository(QueryConfigurationMapper mapper) {
         this.mapper = mapper;
     }
 
@@ -21,7 +21,7 @@ public class QueryConfigurationRepository {
 
     /** 读取任务关联数据源类型，用于选择 SQL 方言。 */
     public Map<String, Object> findTaskDatasource(long taskId) {
-        java.util.List<Map<String, Object>> rows = mapper.selectTaskDatasource(taskId);
-        return rows.isEmpty() ? java.util.Collections.<String, Object>emptyMap() : rows.get(0);
+        Map<String, Object> source = mapper.selectTaskDatasource(taskId);
+        return source == null ? java.util.Collections.<String, Object>emptyMap() : source;
     }
 }

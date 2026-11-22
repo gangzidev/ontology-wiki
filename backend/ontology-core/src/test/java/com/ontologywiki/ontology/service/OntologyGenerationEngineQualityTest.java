@@ -127,6 +127,31 @@ public class OntologyGenerationEngineQualityTest {
         Assert.assertEquals(catalog, ((Map<?,?>) result.get("targetConfig")).get("semanticCatalog"));
     }
 
+    @Test
+    public void numericFlagsAndEnumsAreDimensionsAndPrimaryKeyCountsTheObject() {
+        Map<String, Object> table = table("sys_menu", "菜单", true);
+        table.put("primaryKeys", Collections.singletonList("menu_id"));
+        Map<String, Object> flag = columnWithType("is_frame", "INT(1)");
+        flag.put("comment", "是否为外链（0是 1否）");
+        Map<String, Object> category = columnWithType("menu_type", "TINYINT");
+        category.put("comment", "菜单类型（0目录 1菜单）");
+        table.put("columns", Arrays.asList(columnWithType("menu_id", "BIGINT"), flag, category,
+                columnWithType("parent_id", "BIGINT"), columnWithType("amount", "DECIMAL")));
+        Map<String, Object> result = new OntologyGenerationEngine().generate(schema(table), Collections.emptyList(),
+                Collections.emptyList(), Collections.emptyList(), Collections.emptySet());
+        Map<?, ?> catalog = (Map<?, ?>) result.get("semanticCatalog");
+        List<?> metrics = (List<?>) catalog.get("metrics");
+        Assert.assertTrue(find(metrics, "propertyId", "property_sys_menu_is_frame").isEmpty());
+        Assert.assertTrue(find(metrics, "propertyId", "property_sys_menu_menu_type").isEmpty());
+        Assert.assertTrue(find(metrics, "propertyId", "property_sys_menu_parent_id").isEmpty());
+        Map<?, ?> count = find(metrics, "propertyId", "property_sys_menu_menu_id");
+        Assert.assertEquals("COUNT", count.get("aggregation"));
+        Assert.assertEquals("菜单数量", count.get("name"));
+        Map<?, ?> dimension = find((List<?>) catalog.get("dimensions"), "propertyId", "property_sys_menu_is_frame");
+        Assert.assertEquals("是否为外链", dimension.get("name"));
+        Assert.assertEquals("是否为外链（0是 1否）", dimension.get("definition"));
+    }
+
     private Map<String,Object> column(String name, String comment, boolean nullable) {
         Map<String,Object> column = new LinkedHashMap<>(); column.put("name", name); column.put("comment", comment); column.put("nullable", nullable); return column;
     }

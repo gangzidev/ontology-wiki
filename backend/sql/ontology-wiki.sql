@@ -756,6 +756,24 @@ CREATE TABLE IF NOT EXISTS analysis_task (
   task_id bigint NOT NULL AUTO_INCREMENT, task_name varchar(200) NOT NULL, source_id bigint, wiki_space_id bigint, scope varchar(1000), status varchar(30) DEFAULT 'DRAFT',
   summary text, create_by varchar(64), create_time datetime, update_by varchar(64), update_time datetime, PRIMARY KEY(task_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS ontology_analysis_job (
+  task_id bigint NOT NULL,
+  run_token varchar(64) NOT NULL,
+  status varchar(20) NOT NULL,
+  stage varchar(30) NOT NULL,
+  request_json longtext NOT NULL,
+  checkpoint_json longtext NOT NULL,
+  username varchar(64) NOT NULL,
+  message varchar(1000),
+  lease_until bigint NOT NULL,
+  model_calls int NOT NULL DEFAULT 0,
+  proposal_id bigint NULL,
+  created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (task_id),
+  KEY idx_analysis_job_state (status, lease_until)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS wiki_chat_message (
   message_id bigint NOT NULL AUTO_INCREMENT, session_id varchar(64) NOT NULL, role varchar(20) NOT NULL, content longtext NOT NULL,
   created_by varchar(64), create_time datetime, PRIMARY KEY(message_id), KEY idx_chat_session_user(session_id,created_by,message_id)

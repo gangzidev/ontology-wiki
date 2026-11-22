@@ -2,6 +2,7 @@ package com.ontologywiki.ontology.controller;
 
 import com.ontologywiki.common.core.page.TableDataInfo;
 import com.ontologywiki.ontology.mapper.OntologyResourceMapper;
+import com.ontologywiki.ontology.domain.OntologyResource;
 import com.ontologywiki.ontology.repository.OntologyResourceRepository;
 import com.ontologywiki.ontology.service.OntologyResourceService;
 import org.junit.Assert;
@@ -10,6 +11,7 @@ import org.junit.Test;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -50,6 +52,29 @@ public class OntologyProposalListFilterTest {
         Assert.assertTrue("资产列表必须排除系统索引页", recorder.excludeSystemIndexFlags.get(1));
     }
 
+    @Test
+    public void proposalListOmitsConfigurationButDetailKeepsIt() {
+        Recorder recorder = new Recorder();
+        controller(recorder).list("proposals", 1, 100, null, null, null);
+        List<String> listColumns = Arrays.asList(recorder.pageColumns.split(","));
+        Assert.assertFalse(listColumns.contains("config_json"));
+        Assert.assertTrue(listColumns.containsAll(Arrays.asList(
+                "proposal_id", "proposal_name", "proposal_type", "task_id", "status",
+                "review_by", "review_time", "review_comment", "create_time", "update_time")));
+
+        new OntologyResourceRepository(recorder.mapper()).findById(OntologyResource.of("proposals"), 6L);
+        Assert.assertTrue(Arrays.asList(recorder.detailColumns.split(",")).contains("config_json"));
+    }
+
+    @Test
+    public void otherResourceListsKeepTheirExistingColumns() {
+        for (String key : Arrays.asList("spaces", "assets", "datasources", "analyses")) {
+            Recorder recorder = new Recorder();
+            controller(recorder).list(key, 1, 20, null, null, null);
+            Assert.assertEquals(OntologyResource.of(key).selectColumns(), recorder.pageColumns);
+        }
+    }
+
     // ==================== 测试装配 ====================
 
     private OntologyController controller(Recorder recorder) {
@@ -61,6 +86,8 @@ public class OntologyProposalListFilterTest {
 
     /** 记录 Mapper 收到的查询条件，供断言使用。 */
     private static final class Recorder {
+        String pageColumns;
+        String detailColumns;
         final List<Long> taskIds = new ArrayList<>();
         final List<Boolean> excludeSystemIndexFlags = new ArrayList<>();
 
@@ -72,8 +99,12 @@ public class OntologyProposalListFilterTest {
                         taskIds.add((Long) args[3]);
                         return 0L;
                     case "selectPage":
+                        pageColumns = (String) args[1];
                         excludeSystemIndexFlags.add((Boolean) args[3]);
                         taskIds.add((Long) args[5]);
+                        return Collections.emptyList();
+                    case "selectById":
+                        detailColumns = (String) args[1];
                         return Collections.emptyList();
                     case "selectTaskNames":
                         return Collections.emptyList();

@@ -1,7 +1,10 @@
 package com.ontologywiki.query.service;
 
+import com.ontologywiki.query.compiler.QuerySqlCompiler;
+import com.ontologywiki.query.validation.QueryPlanValidator;
 import org.junit.Assert;
 import org.junit.Test;
+
 import java.util.*;
 
 /** 查询编译器只验证白名单和参数化，不连接真实业务库。 */
@@ -30,6 +33,19 @@ public class QuerySqlCompilerTest {
                 "dimensions", Collections.singletonList(row("id", "region")));
         new QueryPlanValidator().validate(plan, config);
         Assert.assertTrue(new QuerySqlCompiler().compile(plan, config, "mysql").getSql().contains(" join "));
+    }
+
+    @Test
+    public void compilesReviewedObjectDetailRows() {
+        Map<String, Object> config = row("objects", Collections.singletonList(row("id", "users", "table", "sys_user")),
+                "properties", Arrays.asList(row("id", "userId", "objectId", "users", "column", "user_id", "dataType", "BIGINT"),
+                        row("id", "userName", "objectId", "users", "column", "user_name", "dataType", "VARCHAR")),
+                "querySemantics", row("metrics", Collections.emptyList(), "dimensions", Collections.emptyList()));
+        Map<String, Object> plan = row("detailObjectId", "users", "limit", 25);
+        new QueryPlanValidator().validate(plan, config);
+        QuerySqlCompiler.Result result = new QuerySqlCompiler().compile(plan, config, "mysql");
+        Assert.assertTrue(result.getSql().toLowerCase(Locale.ROOT).startsWith("select t0.`user_id`, t0.`user_name` from `sys_user`"));
+        Assert.assertTrue(result.getSql().toLowerCase(Locale.ROOT).contains("limit 25"));
     }
 
     @Test(expected = IllegalArgumentException.class)
@@ -169,6 +185,21 @@ public class QuerySqlCompilerTest {
         ((Map<String, Object>) config.get("querySemantics")).put("timeDimensions",
                 Collections.singletonList(row("id", "order-created", "name", "下单时间", "propertyId", "createdAt")));
         new QueryPlanValidator().validate(row("metrics", Collections.singletonList(row("id", "revenue")), "timeGranularity", "HOUR"), config);
+    }
+
+    @Test
+    public void rejectsInvalidDetailPlansBeforeCompilation() {
+        for (Map<String, Object> plan : Arrays.asList(
+                row("detailObjectId", "missing"),
+                row("detailObjectId", "orders", "timeGranularity", "MONTH"),
+                row("detailObjectId", "orders", "dimensions", Collections.singletonList(row("id", "region"))),
+                row("detailObjectId", "orders", "fields", Collections.singletonList(row("id", "regionName"))),
+                row("detailObjectId", "orders", "offset", -1),
+                row("detailObjectId", "orders", "limit", 1001),
+                row("detailObjectId", "orders", "fields", Collections.emptyList()))) {
+            try { new QueryPlanValidator().validate(plan, config()); Assert.fail("Invalid detail plan accepted: " + plan); }
+            catch (IllegalArgumentException expected) { }
+        }
     }
 
     private Map<String, Object> config() {

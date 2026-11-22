@@ -1,6 +1,8 @@
 package com.ontologywiki.query.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ontologywiki.query.policy.QueryReadinessService;
+import com.ontologywiki.query.validation.QueryConfigurationValidator;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -14,20 +16,22 @@ public class QueryReadinessServiceTest {
         QueryConfigurationRepositoryStub repository = new QueryConfigurationRepositoryStub("DRAFT", "{}");
         QueryReadinessService.Readiness result = new QueryReadinessService(repository, new ObjectMapper()).check(1L);
         Assert.assertFalse(result.isEligibleForEvaluation());
-        Assert.assertEquals(4, result.getReasons().size());
+        Assert.assertFalse(result.isQueryEnabled());
+        Assert.assertTrue(result.getReasons().contains("配置草案尚未完成审核"));
     }
 
     @Test
-    public void reviewedConfigNeedsMetricsDimensionsAndRelations() {
+    public void reviewedConfigCanQueryWithoutEvaluation() {
         String config = completeConfig();
         QueryReadinessService.Readiness result = new QueryReadinessService(new QueryConfigurationRepositoryStub("COMPLETED", config), new ObjectMapper()).check(1L);
         Assert.assertTrue("语义完整的配置可以进入评测", result.isEligibleForEvaluation());
-        Assert.assertFalse("配置文件里的自报评测结果不能打开查询", result.isQueryEnabled());
-        Assert.assertTrue(result.getReasons().contains("尚未通过标准问答评测"));
+        Assert.assertTrue(result.isQueryEnabled());
+        Assert.assertFalse(result.isEvaluationPassed());
+        Assert.assertTrue(result.getReasons().isEmpty());
     }
 
     @Test
-    public void validatorOpensOnlyWhenServerSideEvaluationPassed() throws Exception {
+    public void validatorChecksReviewedSemanticConfiguration() throws Exception {
         String config = completeConfig();
         QueryConfigurationValidator validator = new QueryConfigurationValidator();
         Assert.assertTrue(validator.validate("COMPLETED", new ObjectMapper().readTree(config), true).isEmpty());
@@ -41,7 +45,18 @@ public class QueryReadinessServiceTest {
         QueryReadinessService.Readiness result = service.check(1L);
         Assert.assertTrue(result.isEligibleForEvaluation());
         Assert.assertTrue(result.isQueryEnabled());
+        Assert.assertTrue(result.isEvaluationPassed());
         Assert.assertTrue(result.getReasons().isEmpty());
+    }
+
+    @Test
+    public void aggregateWithoutDimensionsIsQueryableAndEvaluationFailureIsIndependent() {
+        String config = completeConfig().replace("\"dimensions\":[{\"id\":\"d1\",\"name\":\"地区\",\"propertyId\":\"p2\"}]", "\"dimensions\":[]");
+        QueryReadinessService service = new QueryReadinessService(new QueryConfigurationRepositoryStub("COMPLETED", config),
+                new ObjectMapper(), (proposalId, hash) -> { throw new IllegalStateException("评测表未安装"); });
+        QueryReadinessService.Readiness result = service.check(1L);
+        Assert.assertTrue(result.isQueryEnabled());
+        Assert.assertFalse(result.isEvaluationPassed());
     }
 
     @Test

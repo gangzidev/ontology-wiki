@@ -64,7 +64,7 @@ public class OntologyResourceRepository {
         long total = mapper.countPage(resource.getTable(), excludeSystemIndex, spaceId, taskId,
                 likeKeyword, resource.getSearchColumns());
         long offset = ((long) page - 1) * size;
-        List<Map<String, Object>> rows = mapper.selectPage(resource.getTable(), resource.selectColumns(),
+        List<Map<String, Object>> rows = mapper.selectPage(resource.getTable(), resource.listSelectColumns(),
                 resource.getIdColumn(), excludeSystemIndex, spaceId, taskId, likeKeyword,
                 resource.getSearchColumns(), size, offset);
         return new PageResult(total, rows);

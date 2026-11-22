@@ -24,6 +24,8 @@ public class MapperXmlLoadTest {
     /** 需要校验的 Mapper 接口，新增 Mapper 时同步登记 */
     private static final Class<?>[] MAPPERS = {
             AnalysisMemoryMapper.class,
+            AnalysisJobMapper.class,
+            ProposalRevisionMapper.class,
             LlmSettingsMapper.class,
             LlmWikiAnalysisMapper.class,
             LlmWikiFacadeMapper.class,

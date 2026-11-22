@@ -14,7 +14,6 @@ import com.ontologywiki.ontology.repository.OntologyResourceRepository;
 import com.ontologywiki.ontology.service.CredentialService;
 import com.ontologywiki.ontology.service.DataSourceScanner;
 import com.ontologywiki.ontology.service.LlmWikiClient;
-import com.ontologywiki.ontology.service.OntologyGenerationEngine;
 import com.ontologywiki.ontology.service.OntologyArtifactExporter;
 import com.ontologywiki.ontology.service.OntologyResourceService;
 import com.ontologywiki.ontology.service.analysis.OntologyProposalService;
@@ -32,14 +31,11 @@ import com.ontologywiki.common.core.page.TableDataInfo;
 import com.ontologywiki.common.constant.HttpStatus;
 import com.ontologywiki.common.enums.BusinessType;
 import com.ontologywiki.common.utils.SecurityUtils;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 @RestController
 @RequestMapping("/ontology")
 public class OntologyController extends BaseController {
     private static final Logger log = LoggerFactory.getLogger(OntologyController.class);
-    private static final java.util.regex.Pattern QUERY_PATTERN_LINE = java.util.regex.Pattern.compile("(?i)^\\s*(select|insert|update|delete)\\b");
 
     /** 资产图谱：最多节点数与页面正文截取长度 */
     private static final int GRAPH_NODE_LIMIT = 2000;
@@ -48,29 +44,17 @@ public class OntologyController extends BaseController {
     /** 资产启用状态 */
     private static final String STATUS_ACTIVE = "0";
 
-    /** 分析任务状态 */
-    private static final String TASK_RUNNING = "RUNNING";
-    private static final String TASK_DONE = "DONE";
-    private static final String TASK_FAILED = "FAILED";
-
     /** 问答历史与会话列表的返回条数 */
     private static final int CHAT_HISTORY_LIMIT = 12;
     private static final int CHAT_MESSAGE_LIMIT = 100;
     private static final int CHAT_SESSION_LIMIT = 50;
-
-    /** 分析上下文最多注入的 Wiki 资料条数 */
-    private static final int ANALYZE_DOCUMENT_LIMIT = 100;
-
-    /** 视为「业务规则」的资产类型（按大写匹配） */
-    private static final List<String> BUSINESS_RULE_ASSET_TYPES =
-            Arrays.asList("RULE", "BUSINESS_RULE", "LOGIC", "业务规则");
 
     private final CredentialService credentials;
     private final DataSourceScanner scanner;
     private final OntologyIntegrationProperties integration;
     private final RestTemplate rest;
     private final LlmWikiClient llmWiki;
-    private final OntologyGenerationEngine generation;
+    private final com.ontologywiki.ontology.service.analysis.IAnalysisJobService analysisJobs;
     /** 通用资源增删改查业务，SQL 已下沉到 Repository 与 Mapper */
     private final OntologyResourceService resourceService;
     /** 资产图谱与问答所需的数据访问 */
@@ -85,16 +69,14 @@ public class OntologyController extends BaseController {
     /** 草案完成标记、导入、导出与版本对比 */
     private final OntologyProposalService proposalService;
     private final ObjectMapper json = new ObjectMapper();
-    @Autowired
-    private ThreadPoolTaskExecutor threadPoolTaskExecutor;
 
     public OntologyController(CredentialService credentials, DataSourceScanner scanner,
-            OntologyIntegrationProperties integration, RestTemplate rest, LlmWikiClient llmWiki, OntologyGenerationEngine generation,
+            OntologyIntegrationProperties integration, RestTemplate rest, LlmWikiClient llmWiki, com.ontologywiki.ontology.service.analysis.IAnalysisJobService analysisJobs,
             OntologyResourceService resourceService,
             WikiAssetMapper assetMapper, OntologyAnalysisMapper analysisMapper, WikiChatMapper chatMapper,
             LlmSettingsMapper llmSettingsMapper, McpMapper mcpMapper, OntologyProposalService proposalService) {
         this.credentials = credentials; this.scanner = scanner; this.integration = integration; this.rest = rest;
-        this.llmWiki = llmWiki; this.generation = generation;
+        this.llmWiki = llmWiki; this.analysisJobs = analysisJobs;
         this.resourceService = resourceService;
         this.assetMapper = assetMapper;
         this.analysisMapper = analysisMapper;
@@ -335,6 +317,17 @@ public class OntologyController extends BaseController {
         return exportProposal(((Number) rows.get(0).get("proposal_id")).longValue(), format);
     }
 
+    @PreAuthorize("@ss.hasPermi('ontology:proposals:edit')")
+    @Log(title = "本体配置草案版本回退", businessType = BusinessType.INSERT)
+    @PostMapping("/proposals/{id}/rollback")
+    public AjaxResult rollbackProposal(@PathVariable("id") long id) {
+        try {
+            return AjaxResult.success("已从所选版本创建新的待修正草案", proposalService.rollbackToVersion(id));
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return AjaxResult.error(e.getMessage());
+        }
+    }
+
     @PreAuthorize("@ss.hasPermi('ontology:proposals:query')")
     @GetMapping("/proposals/{id}/diff")
     public AjaxResult proposalDiff(@PathVariable("id") long id) {
@@ -363,118 +356,20 @@ public class OntologyController extends BaseController {
     @PreAuthorize("@ss.hasPermi('ontology:analyses:edit')")
     @PostMapping("/analyses/{id}/analyze")
     public AjaxResult analyze(@PathVariable("id") long id, @RequestBody(required=false) Map<String,String> request) {
-        Map<String,Object> task = analysisMapper.selectTask(id);
-        if (task == null) return AjaxResult.error("分析任务不存在");
-        Object sourceValue = task.get("source_id");
-        if (sourceValue == null) return AjaxResult.error("分析任务未配置数据源");
-        Long wikiSpaceId = task.get("wiki_space_id") == null ? null : ((Number) task.get("wiki_space_id")).longValue();
-        if (wikiSpaceId == null) return AjaxResult.error("该任务未绑定行业知识空间，请先编辑任务并选择行业；分析不会读取其他行业的 Wiki 资料");
-        if (chatMapper.countEnabledSpace(wikiSpaceId, STATUS_ACTIVE) == 0) return AjaxResult.error("分析任务关联的行业知识空间不存在或已停用");
-        if (!llmWiki.enabled()) return modelNotConfigured();
-        Map<String,Object> source = analysisMapper.selectDatasource(((Number) sourceValue).longValue());
-        String requestedMode = request == null ? "" : value(request.get("mode")).trim().toUpperCase(Locale.ROOT);
-        if (!requestedMode.isEmpty() && !Arrays.asList("FULL", "INCREMENTAL").contains(requestedMode)) return AjaxResult.error("分析模式无效");
-        boolean incremental = "INCREMENTAL".equals(requestedMode);
-        Set<String> changedTables = incremental ? requestedTableNames(request.get("tables")) : Collections.<String>emptySet();
-        Map<String,Object> previousSnapshot = null;
-        if (incremental) {
-            if (changedTables.isEmpty()) return AjaxResult.error("增量更新请填写至少一个发生变化的表名");
-            if (changedTables.size() > 20) return AjaxResult.error("单次增量更新最多选择20张表");
-            List<Map<String,Object>> previous = analysisMapper.selectLatestProposalWithConfig(id);
-            if (previous.isEmpty()) return AjaxResult.error("该任务还没有历史草案，请先执行一次全量分析");
-            try {
-                Map<String,Object> config = json.readValue(String.valueOf(previous.get(0).get("config_json")), new com.fasterxml.jackson.core.type.TypeReference<Map<String,Object>>() { });
-                Object snapshot = config.get("schemaSnapshot");
-                if (!(snapshot instanceof Map)) return AjaxResult.error("历史草案没有可用于增量更新的结构快照，请先执行一次全量分析");
-                previousSnapshot = (Map<String,Object>) snapshot;
-            } catch (Exception e) { return AjaxResult.error("历史草案结构快照无法解析，请先执行一次全量分析"); }
-        }
-        // 只在非执行中状态流转，避免并发重复触发
-        if (analysisMapper.markTaskRunning(id, "1/4 正在连接数据源，读取表结构和字段…", SecurityUtils.getUsername(), TASK_RUNNING) == 0) return AjaxResult.error("该分析任务正在执行");
-        // 在主线程捕获 username，线程池线程无 SecurityContext
-        String username = SecurityUtils.getUsername();
-        String ask = request == null ? null : request.get("question");
-        int sampleLimit = request == null || request.get("sampleLimit") == null ? 20 : Math.max(0, Math.min(Integer.parseInt(request.get("sampleLimit")), 20));
-        final Map<String,Object> prevSnapshot = previousSnapshot;
-        threadPoolTaskExecutor.execute(() ->
-            doRunAnalysis(id, task, source, wikiSpaceId, incremental, changedTables, prevSnapshot, ask, sampleLimit,
-                    request == null ? null : request.get("queryPatterns"),
-                    request == null ? null : request.get("stages"),
-                    request == null ? null : request.get("tables"),
-                    username));
-        return AjaxResult.success(Collections.singletonMap("async", true));
+        return AjaxResult.success(analysisJobs.start(id, request, SecurityUtils.getUsername()));
     }
 
-    /** 分析任务主逻辑，在线程池中异步执行，不持有 SecurityContext。 */
-    private void doRunAnalysis(long id, Map<String,Object> task, Map<String,Object> source, Long wikiSpaceId,
-            boolean incremental, Set<String> changedTables, Map<String,Object> previousSnapshot,
-            String ask, int sampleLimit, String queryPatternsRaw, String stagesRaw, String tablesRaw,
-            String username) {
-        String prompt;
-        Map<String,Object> schema;
-        try {
-            Map<String,Object> scanOptions = new HashMap<>();
-            if (incremental) {
-                scanOptions.put("tables", changedTables);
-                schema = generation.mergeSchemaSnapshot(previousSnapshot, scanner.scan(source, scanOptions), changedTables);
-            } else if (sampleLimit > 0 && tablesRaw != null) {
-                scanOptions.put("sampleLimit", sampleLimit);
-                scanOptions.put("tables", Arrays.asList(tablesRaw.split(",")));
-                schema = scanner.scan(source, scanOptions);
-            } else {
-                schema = scanner.scan(source, scanOptions);
-            }
-            updateAnalysisProgress(id, "2/4 已读取 " + schema.get("tableCount") + " 张表，正在生成对象、属性和关系候选…", username);
-            prompt = "请基于数据库元数据和确定性候选结果补充本体业务语义。缺乏证据的内容标记为待确认，不要编造。请用中文回答；如有候选，请在回答末尾输出JSON对象，候选使用 objects、properties、relations、logics、actions、terms 数组。所有写动作必须标记高风险并说明依据。\n任务范围：" + scopeForPrompt(task.get("scope")) + "\n工程师问题：" + (ask == null ? "分析该数据库" : ask) + "\n数据库元数据与样例统计：" + json.writeValueAsString(schemaForPrompt(schema));
-        } catch (Exception e) {
-            String message = e instanceof IllegalArgumentException && e.getMessage() != null ? e.getMessage() : "读取数据源或构建分析请求失败，请检查连接和分析参数";
-            analysisMapper.markTaskFailed(id, clip(message, 1000), username, TASK_FAILED);
-            return;
-        }
-        try {
-            List<Map<String,Object>> documents = loadWikiDocuments(wikiSpaceId);
-            List<Map<String,Object>> businessRules = loadBusinessRules(wikiSpaceId);
-            String confirmedKnowledge = llmWiki.confirmedKnowledgeContext(id, wikiSpaceId, ask);
-            List<String> queryPatterns = queryPatternsRaw != null
-                    ? Arrays.asList(queryPatternsRaw.split("\\r?\\n")) : queryPatternsFromScope(task.get("scope"));
-            Set<Integer> stages = parseStages(stagesRaw);
-            Map<String,Object> deterministic = generation.generate(schema, documents, businessRules, queryPatterns, stages);
-            deterministic.put("schemaSnapshot", generation.schemaMetadataSnapshot(schema));
-            updateAnalysisProgress(id, "3/4 候选结构已生成，正在结合 Wiki 资料调用模型补充业务语义…", username);
-            // Keep the full deterministic bundle in the proposal, but send only valid compact examples to the LLM.
-            prompt = clip(prompt, 60000) + "\n确定性生成引擎候选摘要：" + candidateSummary(deterministic) + "\n请只补充有证据的业务语义，返回分析说明和可选JSON。";
-            if (!confirmedKnowledge.isEmpty()) prompt += "\n已确认分析知识（优先参考，若与当前结构冲突请明确提示）：\n" + clip(confirmedKnowledge, 24000);
-            Map<String,Object> analysisResponse = llmWiki.enabled()
-                    ? Collections.singletonMap("answer", llmWiki.analysisCompletion(prompt))
-                    : Collections.singletonMap("answer", "LLM Wiki 未启用，已生成数据库结构候选，请工程师审核。");
-            String answer = String.valueOf(analysisResponse.getOrDefault("answer", ""));
-            updateAnalysisProgress(id, "4/4 模型分析完成，正在校验并保存待审核配置草案…", username);
-            deterministic.put("llmAnswer", answer);
-            Map<String, Object> llmSuggestions = parseLlmSuggestions(answer);
-            if (!llmSuggestions.isEmpty()) deterministic.put("llmSuggestions", llmSuggestions);
-            else if (llmWiki.enabled()) {
-                List<Map<String, Object>> warnings = listOfMaps(deterministic.get("warnings"));
-                warnings.add(warning("LLM_SUGGESTIONS_UNPARSED", "llmWiki", "LLM Wiki 回复没有可识别的结构化候选，保留文本说明供人工查看"));
-                deterministic.put("warnings", warnings);
-            }
-            if (analysisResponse.containsKey("citedPages")) deterministic.put("citedPages", analysisResponse.get("citedPages"));
-            if (analysisResponse.containsKey("citedSources")) deterministic.put("citedSources", analysisResponse.get("citedSources"));
-            String config = json.writeValueAsString(deterministic);
-            // 草案必须回传主键，后续问答与导入都依赖它
-            Map<String, Object> proposalParams = new LinkedHashMap<>();
-            proposalParams.put("proposalName", String.valueOf(task.get("task_name")) + " 配置草案");
-            proposalParams.put("taskId", id);
-            proposalParams.put("configJson", config);
-            proposalParams.put("username", username);
-            proposalParams.put("generatedId", null);
-            analysisMapper.insertProposal(proposalParams);
-            llmWiki.saveAnalysisAnswer(id, answer, false, username);
-            analysisMapper.markTaskFinished(id, clip(answer, 60000), username, TASK_DONE);
-        } catch (Exception e) {
-            log.error("本体分析任务执行失败 taskId={}", id, e);
-            analysisMapper.markTaskFailed(id, "LLM Wiki 分析失败，请检查外部服务配置和数据源状态", username, TASK_FAILED);
-        }
-    }
+    @PreAuthorize("@ss.hasPermi('ontology:analyses:query')")
+    @GetMapping("/analyses/{id}/job")
+    public AjaxResult analysisJob(@PathVariable("id") long id) { return AjaxResult.success(analysisJobs.status(id)); }
+
+    @PreAuthorize("@ss.hasPermi('ontology:analyses:edit')")
+    @PostMapping("/analyses/{id}/cancel")
+    public AjaxResult cancelAnalysis(@PathVariable("id") long id) { return AjaxResult.success(analysisJobs.cancel(id, SecurityUtils.getUsername())); }
+
+    @PreAuthorize("@ss.hasPermi('ontology:analyses:edit')")
+    @PostMapping("/analyses/{id}/resume")
+    public AjaxResult resumeAnalysis(@PathVariable("id") long id) { return AjaxResult.success(analysisJobs.resume(id, SecurityUtils.getUsername())); }
 
     @PreAuthorize("@ss.hasPermi('ontology:analyses:query')")
     @GetMapping("/analyses/{id}/latest-result")
@@ -491,15 +386,6 @@ public class OntologyController extends BaseController {
             result.put("answer", cfg.get("llmAnswer"));
         } catch (Exception ignored) { }
         return AjaxResult.success(result);
-    }
-
-    private void updateAnalysisProgress(long taskId, String message, String username) {
-        analysisMapper.updateRunningProgress(taskId, message, username, TASK_RUNNING);
-    }
-
-    /** 兼容旧调用（主线程 SecurityContext 可用时）。 */
-    private void updateAnalysisProgress(long taskId, String message) {
-        analysisMapper.updateRunningProgress(taskId, message, SecurityUtils.getUsername(), TASK_RUNNING);
     }
 
     @PreAuthorize("@ss.hasPermi('ontology:analyses:query')")
@@ -545,30 +431,6 @@ public class OntologyController extends BaseController {
         }
         Map<String,Object> memory = llmWiki.saveAnalysisAnswer(id, proposalId, answer, confirm, SecurityUtils.getUsername());
         return AjaxResult.success(memory);
-    }
-
-    private Set<String> requestedTableNames(String raw) {
-        Set<String> names = new LinkedHashSet<>();
-        if (raw != null) for (String name : raw.split(",")) if (name != null && !name.trim().isEmpty()) names.add(name.trim().toLowerCase(Locale.ROOT));
-        return names;
-    }
-
-    static List<String> queryPatternsFromScope(Object scope) {
-        List<String> result = new ArrayList<>();
-        if (scope == null) return result;
-        for (String line : String.valueOf(scope).split("\\r?\\n")) {
-            String candidate = line.trim();
-            if (candidate.length() <= 500 && QUERY_PATTERN_LINE.matcher(candidate).find()) result.add(candidate);
-            if (result.size() == 20) break;
-        }
-        return result;
-    }
-
-    static String scopeForPrompt(Object scope) {
-        if (scope == null) return "";
-        List<String> lines = new ArrayList<>();
-        for (String line : String.valueOf(scope).split("\\r?\\n")) if (!QUERY_PATTERN_LINE.matcher(line.trim()).find()) lines.add(line);
-        return String.join("\n", lines).trim();
     }
 
     @PreAuthorize("@ss.hasPermi('ontology:dashboard:list')")
@@ -977,128 +839,6 @@ public class OntologyController extends BaseController {
         } catch (Exception e) { throw new IllegalStateException("LLM Wiki 请求失败：" + e.getMessage(), e); }
     }
 
-    private String extractJson(String answer) {
-        if (answer == null) return null;
-        String candidate = answer.trim().replaceFirst("(?s)^```(?:json)?\\s*", "").replaceFirst("\\s*```$", "");
-        int start = candidate.indexOf('{'), end = candidate.lastIndexOf('}');
-        if (start < 0 || end <= start) return null;
-        candidate = candidate.substring(start, end + 1);
-        try { return json.readTree(candidate).toString(); } catch (Exception e) { return null; }
-    }
-
-    private Map<String, Object> parseLlmSuggestions(String answer) {
-        String raw = extractJson(answer); if (raw == null) return Collections.emptyMap();
-        if (raw.length() > 100000) return Collections.emptyMap();
-        try {
-            Map<String, Object> parsed = json.readValue(raw, Map.class);
-            Map<String, Object> accepted = new LinkedHashMap<>();
-            for (String key : Arrays.asList("objects", "properties", "relations", "logics", "actions", "terms")) {
-                if (!(parsed.get(key) instanceof Collection)) continue;
-                List<Map<String, Object>> items = new ArrayList<>();
-                for (Object item : (Collection<?>) parsed.get(key)) {
-                    if (!(item instanceof Map) || items.size() >= 100) continue;
-                    Map<String, Object> clean = new LinkedHashMap<>();
-                    Map<?, ?> fields = (Map<?, ?>) item;
-                    for (String field : Arrays.asList("id", "name", "description", "technicalName", "objectId", "sourceObjectId", "targetObjectId", "operation", "expression", "risk", "evidence", "confidence")) {
-                        Object value = fields.get(field);
-                        if (value instanceof String) clean.put(field, clip((String) value, 4000));
-                        else if (value instanceof Number || value instanceof Boolean) clean.put(field, value);
-                    }
-                    if (clean.containsKey("name") || clean.containsKey("expression")) {
-                        clean.put("source", "LLM_WIKI"); clean.put("status", "NEEDS_REVIEW"); clean.put("reviewRequired", true);
-                        if ("actions".equals(key) && !"SELECT".equalsIgnoreCase(String.valueOf(clean.get("operation")))) clean.put("risk", "HIGH");
-                        items.add(clean);
-                    }
-                }
-                accepted.put(key, items);
-            }
-            return accepted;
-        } catch (Exception ignored) { return Collections.emptyMap(); }
-    }
-
-    private Map<String, Object> schemaForPrompt(Map<String, Object> schema) {
-        if (schema == null) return Collections.emptyMap();
-        Map<String, Object> out = new LinkedHashMap<>(schema);
-        List<Map<String, Object>> tables = new ArrayList<>();
-        for (Map<String, Object> table : listOfMaps(schema.get("tables"))) {
-            Map<String, Object> copy = new LinkedHashMap<>(table);
-            copy.remove("samples");
-            tables.add(copy);
-        }
-        out.put("tables", tables); return out;
-    }
-
-    private String candidateSummary(Map<String,Object> candidates) {
-        Map<String,Object> summary = new LinkedHashMap<>();
-        Map<String,String[]> fields = new LinkedHashMap<>();
-        fields.put("objects", new String[]{"id","name","table","description","confidence","status"});
-        fields.put("properties", new String[]{"name","objectId","column","dataType","description"});
-        fields.put("relations", new String[]{"name","sourceObjectId","targetObjectId","sourceColumn","targetColumn"});
-        fields.put("logics", new String[]{"name","expression","executable","status"});
-        fields.put("actions", new String[]{"name","objectId","operation","transactional","risk","status"});
-        fields.put("terms", new String[]{"term","name","status","reason"});
-        fields.put("warnings", new String[]{"code","ref","message"});
-        fields.forEach((key, selectedFields) -> {
-            List<Map<String,Object>> items = listOfMaps(candidates.get(key));
-            List<Map<String,Object>> examples = new ArrayList<>();
-            for (Map<String,Object> item : items.subList(0, Math.min(items.size(), 12))) {
-                Map<String,Object> example = new LinkedHashMap<>();
-                for (String field : selectedFields) if (item.containsKey(field)) example.put(field, item.get(field));
-                examples.add(example);
-            }
-            Map<String,Object> group = new LinkedHashMap<>(); group.put("count", items.size()); group.put("examples", examples); summary.put(key, group);
-        });
-        try { return json.writeValueAsString(summary); }
-        catch (Exception e) { return "{}"; }
-    }
-
-    @SuppressWarnings("unchecked")
-    private List<Map<String, Object>> listOfMaps(Object value) {
-        return value instanceof List ? (List<Map<String, Object>>) value : new ArrayList<>();
-    }
-
-    private Map<String, Object> warning(String code, String ref, String message) {
-        Map<String, Object> result = new LinkedHashMap<>(); result.put("code", code); result.put("ref", ref); result.put("message", message); return result;
-    }
-
     private String clip(String value, int max) { return value == null ? "" : value.substring(0, Math.min(value.length(), max)); }
 
-    /** 只把启用且有内容的 Wiki 资产送入生成上下文，避免一次分析把整个 Wiki 塞进模型。 */
-    private List<Map<String, Object>> loadWikiDocuments(Long spaceId) {
-        if (spaceId == null) return Collections.emptyList();
-        List<Map<String,Object>> rows = assetMapper.selectAnalyzeDocuments(STATUS_ACTIVE, spaceId, ANALYZE_DOCUMENT_LIMIT);
-        return rows.stream().map(row -> {
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("sourceId", row.get("sourceId"));
-            item.put("title", clip(String.valueOf(row.get("title")), 200));
-            item.put("domain", row.get("domain"));
-            item.put("content", clip(String.valueOf(row.get("content")), 12000));
-            return item;
-        }).collect(java.util.stream.Collectors.toList());
-    }
-
-    private List<Map<String, Object>> loadBusinessRules(Long spaceId) {
-        if (spaceId == null) return Collections.emptyList();
-        List<Map<String,Object>> rows = assetMapper.selectAnalyzeRules(STATUS_ACTIVE, spaceId,
-                BUSINESS_RULE_ASSET_TYPES, ANALYZE_DOCUMENT_LIMIT);
-        return rows.stream().map(row -> {
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("sourceId", row.get("sourceId"));
-            item.put("title", clip(String.valueOf(row.get("title")), 200));
-            item.put("content", clip(String.valueOf(row.get("content")), 12000));
-            return item;
-        }).collect(java.util.stream.Collectors.toList());
-    }
-
-    private Set<Integer> parseStages(String value) {
-        if (value == null || value.trim().isEmpty()) return new LinkedHashSet<>();
-        Set<Integer> stages = new LinkedHashSet<>();
-        for (String part : value.split(",")) {
-            try {
-                int stage = Integer.parseInt(part.trim());
-                if (stage >= 1 && stage <= 7) stages.add(stage);
-            } catch (NumberFormatException ignored) { }
-        }
-        return stages;
-    }
 }

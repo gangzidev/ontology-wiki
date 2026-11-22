@@ -16,9 +16,9 @@ public class OntologyProposalSemanticValidationTest {
     }
 
     @Test
-    public void rejectsMissingDimension() throws Exception {
+    public void acceptsAggregateWithoutGroupingDimensions() throws Exception {
         List<String> errors = validate("{\"properties\":[{\"id\":\"amount\",\"objectId\":\"order\",\"column\":\"amount\",\"dataType\":\"DECIMAL\"}],\"semanticCatalog\":{\"metrics\":[{\"id\":\"amount_metric\",\"name\":\"订单金额\",\"propertyId\":\"amount\",\"aggregation\":\"SUM\"}],\"dimensions\":[]}}");
-        Assert.assertTrue(errors.get(0).contains("还没有可分组维度"));
+        Assert.assertTrue(errors.toString(), errors.isEmpty());
     }
 
     @Test
