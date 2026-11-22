@@ -65,12 +65,12 @@ spring:
     restart:
       # 热部署开关
       enabled: true
-  # redis 配置
+  # redis 配置，启动前请按实际环境修改
   redis:
-    host: 182.92.153.153
-    port: 7379
-    database: 11
-    password: rdsasdf1234
+    host: 127.0.0.1
+    port: 6379
+    database: 0
+    password:
     # 连接超时时间
     timeout: 10s
     lettuce:
@@ -87,13 +87,14 @@ spring:
 # 外部系统集成。除非设置对应的 enabled=true 和密钥，否则不会发起外呼。
 ontology:
   integration:
-    credential-key: f4c09298ae3d6c9b4869f386366e3803e53f5d1a207e47c8d4372f472fc4a9ed
+    # 用于加密数据源密码的密钥，部署前请替换为足够长的随机字符串。
+    credential-key: change-this-credential-key-in-production
     # 本地 MySQL 持久化 Wiki；仅通过 OpenAI 兼容 API 调用模型。
     llm-wiki:
-      enabled: true
+      enabled: false
       # 内置 Wiki 不依赖外部 Wiki 客户端；仅调用 OpenAI 兼容模型接口。
-      api-base-url: https://fast.sbbbbbbbbb.xyz/v1
-      api-key: sk-l0evc6pAk1m43L0Sb1MLlaY7DKJBixdInMp2Ar31V1BraQQH
+      api-base-url:
+      api-key:
       model: gpt-6-sol
       connect-timeout-ms: 5000
       read-timeout-ms: 120000
@@ -120,8 +121,8 @@ ontology:
 token:
   # 令牌自定义标识
   header: Authorization
-  # 令牌密钥
-  secret: b65fa4d3190f70aed3f1b5c9efb10a0431dbdca611290ef1fcf7709186ff891b
+  # 令牌密钥，部署前请替换为足够长的随机字符串
+  secret: change-this-token-secret-to-a-64-char-random-value-before-production
   # 令牌有效期（默认30分钟）
   expireTime: 30
 
