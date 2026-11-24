@@ -428,7 +428,7 @@
               <div v-if="item.sources && item.sources.length" class="msg-citations">
                 <span class="citations-label">参考资料</span>
                 <el-button v-for="source in item.sources" :key="source.assetId" type="text" size="mini" class="citation-btn" @click="viewSource(source)">
-                  {{ source.title }}
+                  {{ source.title }}<span v-if="source.paragraph"> · 第 {{ source.paragraph }} 段</span>
                 </el-button>
               </div>
               <div v-if="item.savedToWiki" class="msg-saved">
@@ -538,13 +538,20 @@
     <!-- ============================================================
          引用资料预览弹窗
     ============================================================ -->
-    <el-dialog title="引用资料" :visible.sync="sourcePreviewOpen" width="820px" append-to-body>
+    <el-dialog title="引用资料" :visible.sync="sourcePreviewOpen" width="820px" append-to-body @opened="locateSourceExcerpt">
       <div class="source-heading">
         <strong>{{ sourcePreview.asset_name }}</strong>
         <el-tag size="mini">{{ assetTypeText(sourcePreview.asset_type) }}</el-tag>
       </div>
       <p v-if="sourcePreview.description" class="source-description">{{ sourcePreview.description }}</p>
-      <pre class="source-content">{{ sourcePreview.content || '暂无正文' }}</pre>
+      <template v-if="sourcePreview.excerpt && !sourcePreview.matchesOffset">
+        <strong>作答时引用的第 {{ sourcePreview.paragraph }} 段</strong>
+        <pre class="source-content citation-excerpt">{{ sourcePreview.excerpt }}</pre>
+        <p class="source-description">当前正文在原引用位置已有变化。</p>
+        <strong>当前正文</strong>
+      </template>
+      <pre v-if="sourcePreview.matchesOffset" ref="sourceText" class="source-content">{{ sourcePreview.content.slice(0, sourcePreview.offset) }}<mark ref="sourceMark">{{ sourcePreview.excerpt }}</mark>{{ sourcePreview.content.slice(sourcePreview.offset + sourcePreview.excerpt.length) }}</pre>
+      <pre v-else class="source-content">{{ sourcePreview.content || '暂无正文' }}</pre>
       <span slot="footer"><el-button @click="sourcePreviewOpen = false">关闭</el-button></span>
     </el-dialog>
   </div>
@@ -1012,6 +1019,7 @@ export default {
 
     /** 键盘事件：Enter 发送，Shift+Enter 换行 */
     onKeydown(event) {
+      if (event.isComposing || event.keyCode === 229) return
       if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault()
         this.send()
@@ -1166,10 +1174,22 @@ export default {
       })
     },
 
+    locateSourceExcerpt() {
+      const box = this.$refs.sourceText
+      const mark = this.$refs.sourceMark
+      if (box && mark) box.scrollTop += mark.getBoundingClientRect().top - box.getBoundingClientRect().top - 28
+    },
+
     /** 查看引用资料详情 */
     viewSource(source) {
       getResource('assets', source.assetId).then(({ data }) => {
-        this.sourcePreview = data || {}
+        const content = (data && data.content) || ''
+        this.sourcePreview = Object.assign({}, data, {
+          offset: source.offset,
+          excerpt: source.excerpt,
+          paragraph: source.paragraph,
+          matchesOffset: source.excerpt && content.startsWith(source.excerpt, source.offset),
+        })
         this.sourcePreviewOpen = true
       }).catch(() => this.$modal.msgError('引用资料加载失败'))
     },

@@ -1,5 +1,9 @@
 package com.ontologywiki.ontology.controller;
 
+import com.ontologywiki.ontology.repository.RowIds;
+import cn.hutool.core.collection.CollUtil;
+import cn.hutool.core.map.MapUtil;
+
 import java.util.*;
 import java.util.Base64;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -37,10 +41,6 @@ import com.ontologywiki.common.utils.SecurityUtils;
 public class OntologyController extends BaseController {
     private static final Logger log = LoggerFactory.getLogger(OntologyController.class);
 
-    /** 资产图谱：最多节点数与页面正文截取长度 */
-    private static final int GRAPH_NODE_LIMIT = 2000;
-    private static final int GRAPH_CONTENT_LENGTH = 20000;
-
     /** 资产启用状态 */
     private static final String STATUS_ACTIVE = "0";
 
@@ -57,7 +57,7 @@ public class OntologyController extends BaseController {
     private final com.ontologywiki.ontology.service.analysis.IAnalysisJobService analysisJobs;
     /** 通用资源增删改查业务，SQL 已下沉到 Repository 与 Mapper */
     private final OntologyResourceService resourceService;
-    /** 资产图谱与问答所需的数据访问 */
+    /** 资产问答所需的数据访问 */
     private final WikiAssetMapper assetMapper;
     /** 分析任务、草案与数据源的数据访问 */
     private final OntologyAnalysisMapper analysisMapper;
@@ -73,7 +73,8 @@ public class OntologyController extends BaseController {
     public OntologyController(CredentialService credentials, DataSourceScanner scanner,
             OntologyIntegrationProperties integration, RestTemplate rest, LlmWikiClient llmWiki, com.ontologywiki.ontology.service.analysis.IAnalysisJobService analysisJobs,
             OntologyResourceService resourceService,
-            WikiAssetMapper assetMapper, OntologyAnalysisMapper analysisMapper, WikiChatMapper chatMapper,
+            WikiAssetMapper assetMapper,
+            OntologyAnalysisMapper analysisMapper, WikiChatMapper chatMapper,
             LlmSettingsMapper llmSettingsMapper, McpMapper mcpMapper, OntologyProposalService proposalService) {
         this.credentials = credentials; this.scanner = scanner; this.integration = integration; this.rest = rest;
         this.llmWiki = llmWiki; this.analysisJobs = analysisJobs;
@@ -115,72 +116,11 @@ public class OntologyController extends BaseController {
         }
     }
 
-    @PreAuthorize("@ss.hasPermi('ontology:assets:list')")
-    @GetMapping("/assets/graph")
-    public AjaxResult assetGraph(@RequestParam(name="spaceId", required=false) Long spaceId) {
-        // 1. 取节点（Wiki 页面附带正文前缀，用于解析页面间引用）
-        List<Map<String,Object>> rows = assetMapper.selectGraphNodes("0", "SYSTEM_INDEX", spaceId, GRAPH_NODE_LIMIT, GRAPH_CONTENT_LENGTH);
-        Map<Long,Map<String,Object>> byId = new LinkedHashMap<>();
-        Map<String,Long> byName = new HashMap<>();
-        List<Map<String,Object>> nodes = new ArrayList<>();
-        for (Map<String,Object> row : rows) {
-            long id = ((Number) row.get("asset_id")).longValue();
-            Map<String,Object> node = new LinkedHashMap<>(); node.put("id", String.valueOf(id)); node.put("assetId", id); node.put("name", row.get("asset_name")); node.put("assetType", row.get("asset_type")); node.put("spaceId", row.get("space_id"));
-            byId.put(id, row); byName.putIfAbsent(String.valueOf(row.get("asset_name")).toLowerCase(Locale.ROOT), id); nodes.add(node);
-        }
-        // 2. 取边：来源标签、页面引用
-        List<Map<String,Object>> edges = new ArrayList<>();
-        Set<String> seen = new HashSet<>();
-        for (Map<String,Object> row : rows) {
-            long pageId = ((Number) row.get("asset_id")).longValue();
-            String tags = row.get("tags") == null ? "" : String.valueOf(row.get("tags"));
-            if (tags.startsWith("SOURCE:")) try {
-                long sourceId = Long.parseLong(tags.substring("SOURCE:".length()).trim());
-                addAssetGraphEdge(edges, seen, byId, sourceId, pageId, "来源资料");
-            } catch (NumberFormatException ignored) { }
-            if (!"WIKI_PAGE".equals(row.get("asset_type")) || row.get("content") == null) continue;
-            String content = String.valueOf(row.get("content"));
-            java.util.regex.Matcher wikiLinks = java.util.regex.Pattern.compile("\\[\\[([^\\]]{1,200})\\]\\]").matcher(content);
-            while (wikiLinks.find()) addAssetGraphEdge(edges, seen, byId, byName, wikiLinks.group(1), pageId, "页面引用");
-            java.util.regex.Matcher markdownLinks = java.util.regex.Pattern.compile("\\[[^\\]]{1,200}\\]\\(([^)\\s]{1,500})\\)").matcher(content);
-            while (markdownLinks.find()) addAssetGraphEdge(edges, seen, byId, byName, markdownLinks.group(1), pageId, "页面引用");
-        }
-        // 3. 补边：分析沉淀页面与其引用来源
-        List<Map<String,Object>> memories = assetMapper.selectAnalysisMemoryLinks("0", "WIKI_PAGE", spaceId);
-        for (Map<String,Object> memory : memories) {
-            Object raw = memory.get("source_json"); if (raw == null) continue;
-            try {
-                JsonNode source = json.readTree(String.valueOf(raw));
-                JsonNode citations = source.path("citedSources");
-                if (!citations.isArray()) continue;
-                long pageId = ((Number) memory.get("asset_id")).longValue();
-                for (JsonNode citation : citations) if (citation.path("assetId").canConvertToLong()) {
-                    addAssetGraphEdge(edges, seen, byId, citation.path("assetId").asLong(), pageId, "分析依据");
-                }
-            } catch (Exception ignored) { }
-        }
-        Map<String,Object> result = new LinkedHashMap<>(); result.put("nodes", nodes); result.put("edges", edges);
-        return AjaxResult.success(result);
-    }
-
-    private void addAssetGraphEdge(List<Map<String,Object>> edges, Set<String> seen, Map<Long,Map<String,Object>> nodes, long sourceId, long targetId, String label) {
-        if (sourceId == targetId || !nodes.containsKey(sourceId) || !nodes.containsKey(targetId)) return;
-        String key = sourceId + ":" + targetId;
-        if (!seen.add(key)) return;
-        Map<String,Object> edge = new LinkedHashMap<>(); edge.put("source", String.valueOf(sourceId)); edge.put("target", String.valueOf(targetId)); edge.put("name", label); edges.add(edge);
-    }
-
-    private void addAssetGraphEdge(List<Map<String,Object>> edges, Set<String> seen, Map<Long,Map<String,Object>> nodes, Map<String,Long> names, String rawTarget, long sourceId, String label) {
-        String target = rawTarget == null ? "" : rawTarget.trim();
-        if (target.startsWith("http://") || target.startsWith("https://")) return;
-        int query = target.indexOf('?'); if (query >= 0) target = target.substring(0, query);
-        int fragment = target.indexOf('#'); if (fragment >= 0) target = target.substring(0, fragment);
-        int slash = target.lastIndexOf('/'); if (slash >= 0) target = target.substring(slash + 1);
-        if (target.toLowerCase(Locale.ROOT).endsWith(".md")) target = target.substring(0, target.length() - 3);
-        try { target = java.net.URLDecoder.decode(target, "UTF-8"); } catch (Exception ignored) { }
-        Long targetId = null;
-        try { targetId = Long.valueOf(target); } catch (NumberFormatException ignored) { targetId = names.get(target.toLowerCase(Locale.ROOT)); }
-        if (targetId != null) addAssetGraphEdge(edges, seen, nodes, sourceId, targetId, label);
+    @PreAuthorize("@ss.hasPermi('ontology:assets:edit')")
+    @PostMapping("/assets/chunks/rebuild")
+    public AjaxResult rebuildAssetChunkIndex(@RequestParam(name = "afterAssetId", defaultValue = "0") long afterAssetId,
+                                             @RequestParam(name = "limit", defaultValue = "100") int limit) {
+        return AjaxResult.success(resourceService.rebuildWikiChunkIndexBatch(afterAssetId, limit));
     }
 
     @PreAuthorize("@ss.hasPermi('ontology:' + #p0 + ':query')")
@@ -279,6 +219,18 @@ public class OntologyController extends BaseController {
         return AjaxResult.success(scanner.scan(source, options == null ? Collections.<String,Object>emptyMap() : options));
     }
 
+    @PreAuthorize("@ss.hasPermi('ontology:datasources:query')")
+    @GetMapping("/datasources/{id}/tables")
+    public AjaxResult listDatasourceTables(@PathVariable("id") long id,
+            @RequestParam(value = "keyword", required = false) String keyword,
+            @RequestParam(value = "schema", required = false) String schema,
+            @RequestParam(value = "pageNum", defaultValue = "1") int pageNum,
+            @RequestParam(value = "pageSize", defaultValue = "50") int pageSize) {
+        Map<String,Object> source = analysisMapper.selectDatasource(id);
+        if (source == null) return AjaxResult.error("数据源不存在");
+        return AjaxResult.success(scanner.listTables(source, keyword, schema, pageNum, pageSize));
+    }
+
     @PreAuthorize("@ss.hasPermi('ontology:proposals:edit')")
     @Log(title = "本体配置草案导入", businessType = BusinessType.IMPORT, isSaveRequestData = false, isSaveResponseData = false)
     @PostMapping("/proposals/{id}/import")
@@ -314,7 +266,7 @@ public class OntologyController extends BaseController {
         List<Map<String,Object>> rows = analysisMapper.selectLatestProposalId(id);
         if (rows.isEmpty()) return ResponseEntity.status(org.springframework.http.HttpStatus.NOT_FOUND)
                 .contentType(MediaType.APPLICATION_JSON).body(AjaxResult.error("该分析任务还没有可导出的配置草案"));
-        return exportProposal(((Number) rows.get(0).get("proposal_id")).longValue(), format);
+        return exportProposal(RowIds.first(rows, "proposal_id"), format);
     }
 
     @PreAuthorize("@ss.hasPermi('ontology:proposals:edit')")
@@ -362,6 +314,25 @@ public class OntologyController extends BaseController {
     @PreAuthorize("@ss.hasPermi('ontology:analyses:query')")
     @GetMapping("/analyses/{id}/job")
     public AjaxResult analysisJob(@PathVariable("id") long id) { return AjaxResult.success(analysisJobs.status(id)); }
+
+    @PreAuthorize("@ss.hasPermi('ontology:analyses:query')")
+    @GetMapping("/analyses/{id}/runs")
+    public AjaxResult analysisRuns(@PathVariable("id") long id, @RequestParam(value="before", required=false) Long before,
+                                   @RequestParam(value="limit", defaultValue="20") int limit) {
+        return AjaxResult.success(analysisJobs.history(id, before, limit));
+    }
+
+    @PreAuthorize("@ss.hasPermi('ontology:analyses:query')")
+    @GetMapping("/analyses/{id}/runs/{runId}/model-calls")
+    public AjaxResult analysisModelCalls(@PathVariable("id") long id, @PathVariable("runId") long runId) {
+        return AjaxResult.success(analysisJobs.modelCalls(id, runId));
+    }
+
+    @PreAuthorize("@ss.hasPermi('ontology:analyses:query')")
+    @GetMapping("/analyses/{id}/runs/{runId}/stage-timings")
+    public AjaxResult analysisStageTimings(@PathVariable("id") long id, @PathVariable("runId") long runId) {
+        return AjaxResult.success(analysisJobs.stageTimings(id, runId));
+    }
 
     @PreAuthorize("@ss.hasPermi('ontology:analyses:edit')")
     @PostMapping("/analyses/{id}/cancel")
@@ -455,12 +426,12 @@ public class OntologyController extends BaseController {
         if ("ASSET".equals(scopeType)) {
             List<Map<String,Object>> assetRows = chatMapper.selectAssetSpace(scopeId, STATUS_ACTIVE);
             if (assetRows.isEmpty()) return AjaxResult.error("所选 Wiki 资产不存在或已停用");
-            spaceId = assetRows.get(0).get("space_id") == null ? null : ((Number) assetRows.get(0).get("space_id")).longValue();
+            spaceId = MapUtil.getLong(CollUtil.getFirst(assetRows), "space_id");
         }
         if ("ANALYSIS".equals(scopeType)) {
             List<Map<String,Object>> taskRows = chatMapper.selectTaskSpace(scopeId);
             if (taskRows.isEmpty()) return AjaxResult.error("所选分析任务不存在");
-            spaceId = taskRows.get(0).get("wiki_space_id") == null ? null : ((Number) taskRows.get(0).get("wiki_space_id")).longValue();
+            spaceId = MapUtil.getLong(CollUtil.getFirst(taskRows), "wiki_space_id");
         }
         Long proposalId = null;
         if ("ANALYSIS".equals(scopeType) && request.get("proposalId") != null && !String.valueOf(request.get("proposalId")).trim().isEmpty()) {
@@ -509,8 +480,12 @@ public class OntologyController extends BaseController {
             messageParams.put("generatedId", null);
             chatMapper.insertMessageWithKey(messageParams);
             Object messageId = messageParams.get("generatedId");
-            if (messageId instanceof Number && wikiResponse.get("citationIds") instanceof List) {
-                for (Object citedId : (List<?>) wikiResponse.get("citationIds")) if (citedId instanceof Number) chatMapper.insertCitation(((Number) messageId).longValue(), ((Number) citedId).longValue());
+            if (messageId instanceof Number && wikiResponse.get("citedSources") instanceof List) {
+                for (Object entry : (List<?>) wikiResponse.get("citedSources")) {
+                    Map<?,?> source = (Map<?,?>) entry;
+                    chatMapper.insertCitation(((Number) messageId).longValue(),
+                            ((Number) source.get("assetId")).longValue(), json.writeValueAsString(source));
+                }
             }
             if (wikiResponse.get("contextState") instanceof Map) try {
                 chatMapper.updateSessionContext(sessionId, json.writeValueAsString(wikiResponse.get("contextState")), username);
@@ -548,6 +523,16 @@ public class OntologyController extends BaseController {
             for (Map<String,Object> row : chatMapper.selectCitations(ids)) {
                 long messageId = ((Number) row.get("message_id")).longValue();
                 Map<String,Object> source = new LinkedHashMap<>(); source.put("assetId", ((Number) row.get("asset_id")).longValue()); source.put("title", row.get("asset_name")); source.put("assetType", row.get("asset_type"));
+                if (row.get("evidence_json") != null) {
+                    try {
+                        JsonNode evidence = json.readTree(String.valueOf(row.get("evidence_json")));
+                        for (String field : Arrays.asList("paragraph", "offset", "excerpt", "score", "version")) {
+                            if (evidence.hasNonNull(field)) source.put(field, json.convertValue(evidence.get(field), Object.class));
+                        }
+                    } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                        log.warn("无法解析问答引用位置，消息编号 {}", messageId);
+                    }
+                }
                 sourcesByMessage.computeIfAbsent(messageId, key -> new ArrayList<>()).add(source);
             }
             for (Map<String,Object> message : messages) message.put("sources", sourcesByMessage.getOrDefault(((Number) message.get("message_id")).longValue(), Collections.<Map<String,Object>>emptyList()));
@@ -652,7 +637,8 @@ public class OntologyController extends BaseController {
             Map<String,Object> row = rows.get(0);
             String baseUrl = String.valueOf(row.get("api_base_url"));
             String apiKey  = row.get("api_key_enc") == null ? "" : credentials.decrypt(String.valueOf(row.get("api_key_enc")));
-            return AjaxResult.success(testModelConnection(baseUrl, apiKey, String.valueOf(row.get("model"))));
+            return AjaxResult.success(llmWiki.testModelConnection(baseUrl, apiKey, String.valueOf(row.get("model")),
+                    String.valueOf(row.get("provider_type")), row.get("id"), String.valueOf(row.get("usage_scene"))));
         } catch (Exception e) {
             Map<String,Object> result = new LinkedHashMap<>(); result.put("connected", false); result.put("message", e.getMessage());
             return AjaxResult.success(result);
@@ -669,6 +655,7 @@ public class OntologyController extends BaseController {
         Map<String,Object> input = body == null ? new LinkedHashMap<>() : body;
         String baseUrl = clip(String.valueOf(input.getOrDefault("apiBaseUrl","")),1000).trim();
         String model = clip(String.valueOf(input.getOrDefault("model","")),200).trim();
+        String providerType = validProviderType(String.valueOf(input.getOrDefault("providerType", "OPENAI_COMPAT")));
         if (baseUrl.isEmpty()) return AjaxResult.error("请先填写接口地址");
         if (model.isEmpty()) return AjaxResult.error("请先填写模型名称");
         String apiKey = input.get("apiKey") == null ? "" : String.valueOf(input.get("apiKey")).trim();
@@ -680,28 +667,9 @@ public class OntologyController extends BaseController {
                 apiKey = credentials.decrypt(String.valueOf(rows.get(0).get("api_key_enc")));
             }
         }
-        return AjaxResult.success(testModelConnection(baseUrl, apiKey, model));
+        return AjaxResult.success(llmWiki.testModelConnection(baseUrl, apiKey, model, providerType, id, input.get("usageScene")));
     }
 
-    /** 调用模型的 /models 接口验证地址、网络与密钥是否可用，异常统一转为 connected=false 返回 */
-    private Map<String,Object> testModelConnection(String baseUrl, String apiKey, String model) {
-        Map<String,Object> result = new LinkedHashMap<>();
-        try {
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            if (apiKey != null && !apiKey.trim().isEmpty()) headers.setBearerAuth(apiKey.trim());
-            String uri = baseUrl.endsWith("/") ? baseUrl + "models" : baseUrl + "/models";
-            ResponseEntity<String> resp = rest.exchange(java.net.URI.create(uri), HttpMethod.GET,
-                    new HttpEntity<>(headers), String.class);
-            result.put("connected", true);
-            result.put("model", model);
-            try { result.put("response", json.readTree(resp.getBody())); } catch (Exception ignored) { result.put("response", resp.getBody()); }
-        } catch (Exception e) {
-            result.put("connected", false);
-            result.put("message", e.getMessage());
-        }
-        return result;
-    }
 
     private String validProviderType(String v) {
         if (v == null) return "OPENAI_COMPAT";

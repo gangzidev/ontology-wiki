@@ -16,6 +16,7 @@ import com.ontologywiki.query.validation.QueryPlanValidator;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
+import java.util.Collections;
 import java.util.Map;
 
 @Service
@@ -80,32 +81,54 @@ public class DataQueryServiceImpl implements IDataQueryService {
         if (question.isEmpty()) throw new IllegalArgumentException("问题不能为空");
         if (question.length() > 2000 || displayQuestion.length() > 2000) throw new IllegalArgumentException("问题不能超过2000字");
         String sessionId = text(request.get("sessionId"));
-        history.validateSession(username, proposalId, sessionId);
+        Map<String, Object> previous;
+        if (Boolean.TRUE.equals(request.get("newQuestion")) || (!displayQuestion.isEmpty() && !question.equals(displayQuestion))) {
+            history.validateSession(username, proposalId, sessionId);
+            previous = Collections.emptyMap();
+        } else {
+            previous = history.latest(username, proposalId, sessionId);
+        }
+        String queryQuestion = question;
+        if ("clarification".equals(previous.get("type"))) {
+            String pending = text(previous.get("queryQuestion"));
+            if (!pending.isEmpty()) queryQuestion = pending + "\n补充说明：" + question;
+        }
         Map<String, Object> response;
         try {
-            response = answer(proposalId, question);
+            if (queryQuestion.length() > 2000) throw new IllegalArgumentException("补充后的问题超过2000字，请另起一个问题");
+            response = answer(proposalId, queryQuestion, previous);
         } catch (IllegalArgumentException | IllegalStateException failure) {
             response = new LinkedHashMap<>();
             response.put("type", "error");
             response.put("error", failure.getMessage());
         }
         response.put("question", displayQuestion.isEmpty() ? question : displayQuestion);
-        response.put("queryQuestion", question);
+        response.put("queryQuestion", queryQuestion);
         return saveHistory(username, proposalId, sessionId, response);
     }
 
     @SuppressWarnings("unchecked")
-    private Map<String, Object> answer(long proposalId, String question) {
-        Map<String, Object> planned = planner.plan(proposalId, question);
+    private Map<String, Object> answer(long proposalId, String question, Map<String, Object> previous) {
+        Object base = previous.get("plan");
+        Map<String, Object> planned = base instanceof Map
+                ? planner.followUp(proposalId, question, (Map<String, Object>) base, previous.get("configHash"))
+                : planner.plan(proposalId, question);
         if (planned.containsKey("clarification")) {
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("type", "clarification");
             response.put("clarification", planned.get("clarification"));
+            if (base instanceof Map && planned.containsKey("configHash")) {
+                response.put("plan", base);
+                response.put("configHash", previous.get("configHash"));
+            }
             return response;
         }
         Map<String, Object> plan = (Map<String, Object>) planned.get("plan");
         QueryReadinessService.Readiness state = readiness.check(proposalId);
-        Map<String, Object> response = responses.result(plan, execution.execute(proposalId, plan));
+        boolean followedUp = planned.containsKey("changedFields");
+        Map<String, Object> response = responses.result(plan, followedUp
+                ? execution.execute(proposalId, plan, text(planned.get("configHash"))) : execution.execute(proposalId, plan));
+        if (followedUp) response.put("changedFields", planned.get("changedFields"));
         response.put("semanticEvidence", planned.get("semanticEvidence"));
         response.put("queryEnabled", state.isQueryEnabled());
         return response;
@@ -127,7 +150,16 @@ public class DataQueryServiceImpl implements IDataQueryService {
     public Map<String, Object> catalog(long proposalId) {
         Map<String, Object> proposal = repository.findProposal(proposalId);
         QueryReadinessService.Readiness state = readiness.check(proposalId, proposal);
-        Map<String, Object> result = catalog.describe(readiness.proposal(proposal));
+        Map<String, Object> config = readiness.proposal(proposal);
+        Map<String, Object> result = catalog.describe(config);
+        result.put("exampleQuestions", java.util.Collections.emptyList());
+        if (state.isQueryEnabled() && proposal.get("task_id") instanceof Number) {
+            Map<String,Object> source = repository.findTaskDatasource(((Number) proposal.get("task_id")).longValue());
+            if (source.get("db_type") != null) {
+                result.put("exampleQuestions", planner.examples(config, result,
+                        plan -> compiler.compile(plan, config, String.valueOf(source.get("db_type")))));
+            }
+        }
         result.put("readiness", state);
         result.put("eligibleForEvaluation", state.isEligibleForEvaluation());
         result.put("queryEnabled", state.isQueryEnabled());

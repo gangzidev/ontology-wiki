@@ -44,6 +44,26 @@ async function main() {
   assert.equal(msg.plan.offset, undefined)
   assert.equal(instance.messages[0].viewMode, 'table')
   assert.equal(instance.sending, false)
+  instance.catalog.exampleQuestions = ['查看sys_user的用户名称']
+  instance.readiness = {queryEnabled: false}
+  assert.equal(component.computed.exampleQuestions.call(instance).length, 0)
+  instance.readiness.queryEnabled = true
+  const examples = component.computed.exampleQuestions.call(instance)
+  assert.equal(examples.length, 1)
+  instance.startQueryTimer = instance.stopQueryTimer = () => {}
+  const asked = []
+  for (const data of [{}, {type: 'result'}, {type: 'clarification', clarification: ''}]) {
+    context.askDataQuery = async (id, question) => {
+      asked.push([id, question])
+      return {data}
+    }
+    instance.sendQuestion(examples[0])
+    await new Promise(resolve => setImmediate(resolve))
+    const reply = instance.messages[instance.messages.length - 1]
+    assert.equal(reply.type, 'error')
+    assert.equal(reply.error, '未收到有效的查询响应，请重试')
+  }
+  assert.deepEqual(asked, Array(3).fill([instance.selectedProposalId, examples[0]]))
   console.log('PASS: detail catalogue, physical table selection, field selection, pagination request and conversation result')
 }
 main().catch(error => {console.error(error); process.exitCode = 1})

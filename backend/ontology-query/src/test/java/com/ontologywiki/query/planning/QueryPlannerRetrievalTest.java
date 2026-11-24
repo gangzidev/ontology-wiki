@@ -149,6 +149,51 @@ public class QueryPlannerRetrievalTest {
         Assert.assertTrue(model.prompts.isEmpty());
     }
 
+    @Test
+    public void followUpKeepsUnchangedFiltersAndReplacesOnlyNamedFilter() {
+        QueryPlannerService planner = new QueryPlannerService(null, null, null, null, null, json);
+        Map<String, Object> previous = row("metrics", Collections.singletonList(row("id", "menuCount")),
+                "dimensions", Collections.emptyList(), "filters", Arrays.asList(
+                        row("propertyId", "external", "operator", "=", "value", 0),
+                        row("propertyId", "menuId", "operator", ">", "value", 10)), "timeRange", row("from", "2026-01-01", "to", "2026-01-31"), "limit", 20);
+        Map<String, Object> changes = row("filters", Collections.singletonList(row("propertyId", "external", "operator", "=", "value", 1)));
+
+        Map<String, Object> merged = planner.applyFollowUp(previous, changes);
+
+        List<?> filters = (List<?>) merged.get("filters");
+        Assert.assertEquals(2, filters.size());
+        Assert.assertEquals(1, ((Map<?, ?>) filters.get(0)).get("value"));
+        Assert.assertEquals(10, ((Map<?, ?>) filters.get(1)).get("value"));
+        Assert.assertEquals(previous.get("timeRange"), merged.get("timeRange"));
+        Assert.assertEquals(20, merged.get("limit"));
+    }
+
+    @Test
+    public void followUpCanClearComparisonAndStartsFromFirstDetailPage() {
+        QueryPlannerService planner = new QueryPlannerService(null, null, null, null, null, json);
+        Map<String, Object> previous = row("detailObjectId", "menus", "offset", 100,
+                "comparison", row("type", "MOM"), "filters", Collections.emptyList());
+
+        Map<String, Object> merged = planner.applyFollowUp(previous, Collections.singletonMap("comparison", null));
+
+        Assert.assertFalse(merged.containsKey("comparison"));
+        Assert.assertFalse(merged.containsKey("offset"));
+        Assert.assertEquals("menus", merged.get("detailObjectId"));
+    }
+
+    @Test
+    public void clearingTimeRangeAlsoClearsOrphanedTimeDimensionAndComparison() {
+        QueryPlannerService planner = new QueryPlannerService(null, null, null, null, null, json);
+        Map<String, Object> previous = row("timeDimension", "createdAt", "timeRange", row("from", "2026-01-01", "to", "2026-01-31"),
+                "comparison", row("type", "MOM"), "metrics", Collections.singletonList(row("id", "orderCount")));
+
+        Map<String, Object> merged = planner.applyFollowUp(previous, Collections.singletonMap("timeRange", null));
+
+        Assert.assertFalse(merged.containsKey("timeDimension"));
+        Assert.assertFalse(merged.containsKey("comparison"));
+        Assert.assertEquals(previous.get("metrics"), merged.get("metrics"));
+    }
+
     private QueryPlannerService planner(Map<String, Object> config, StubLlm model) throws Exception {
         final Map<String, Object> proposal = row("status", "COMPLETED", "config_json", json.writeValueAsString(config));
         QueryConfigurationRepository repository = new QueryConfigurationRepository(null) {

@@ -292,6 +292,8 @@ public class QuerySqlCompiler {
             for (Map<String, Object> relation : path) {
                 if (relation.get("viaTable") != null || relation.get("viaObjectId") != null) {
                     appendManyToManyJoin(sql, objects, aliases, joined, relation, dialect);
+                    Object viaObjectId = relation.get("viaObjectId");
+                    if (viaObjectId != null && !needed.contains(String.valueOf(viaObjectId))) needed.add(String.valueOf(viaObjectId));
                     continue;
                 }
                 String source = String.valueOf(relation.get("sourceObjectId")), next = String.valueOf(relation.get("targetObjectId"));

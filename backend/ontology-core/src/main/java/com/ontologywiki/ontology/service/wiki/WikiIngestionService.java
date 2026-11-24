@@ -1,5 +1,7 @@
 package com.ontologywiki.ontology.service.wiki;
 
+import com.ontologywiki.ontology.repository.RowIds;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.ontologywiki.ontology.domain.WikiAssetStatus;
 import com.ontologywiki.ontology.domain.WikiAssetType;
@@ -39,13 +41,19 @@ public class WikiIngestionService {
     private final WikiAssetMapper assetMapper;
     private final LlmClient llmClient;
     private final WikiIndexService indexService;
+    private final WikiRelationService relationService;
+    private final WikiChunkIndexService chunkIndexService;
 
     public WikiIngestionService(WikiAssetMapper assetMapper,
                                 LlmClient llmClient,
-                                WikiIndexService indexService) {
+                                WikiIndexService indexService,
+                                WikiRelationService relationService,
+                                WikiChunkIndexService chunkIndexService) {
         this.assetMapper = assetMapper;
         this.llmClient = llmClient;
         this.indexService = indexService;
+        this.relationService = relationService;
+        this.chunkIndexService = chunkIndexService;
     }
 
     /**
@@ -101,15 +109,26 @@ public class WikiIngestionService {
 
         List<Map<String, Object>> existingPages = assetMapper.selectPageBySourceTag(
                 WikiAssetType.WIKI_PAGE.getCode(), sourceTag);
+        boolean updated = !existingPages.isEmpty();
+        Long previousSpaceId = null;
 
         if (existingPages.isEmpty()) {
             // 首次整理：插入新页面
             assetMapper.insertIngestedPage(spaceId, title, WikiAssetType.WIKI_PAGE.getCode(),
                     source.get("domain_name"), summary, content, sourceTag, WikiAssetStatus.ACTIVE.getCode());
+            existingPages = assetMapper.selectPageBySourceTag(WikiAssetType.WIKI_PAGE.getCode(), sourceTag);
         } else {
             // 重复整理：更新同一来源页面，保持与原始资料一一对应
-            Long pageAssetId = ((Number) existingPages.get(0).get("asset_id")).longValue();
+            Long pageAssetId = RowIds.first(existingPages, "asset_id");
+            previousSpaceId = relationService.pageSpaceId(pageAssetId);
             assetMapper.updateIngestedPage(spaceId, title, source.get("domain_name"), summary, content, pageAssetId);
+        }
+
+        if (!existingPages.isEmpty()) {
+            long pageAssetId = RowIds.first(existingPages, "asset_id");
+            chunkIndexService.refreshAsset(pageAssetId);
+            if (updated) relationService.refreshPage(pageAssetId, previousSpaceId);
+            else relationService.refreshPage(pageAssetId);
         }
 
         // 刷新索引
@@ -119,7 +138,7 @@ public class WikiIngestionService {
         Map<String, Object> resultMap = new LinkedHashMap<>();
         resultMap.put("title", title);
         resultMap.put("sourceId", assetId);
-        resultMap.put("updated", !existingPages.isEmpty());
+        resultMap.put("updated", updated);
         resultMap.put("template", templateType.name());
 
         return resultMap;

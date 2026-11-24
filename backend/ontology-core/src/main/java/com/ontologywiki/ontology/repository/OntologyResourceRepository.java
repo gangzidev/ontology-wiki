@@ -236,7 +236,7 @@ public class OntologyResourceRepository {
         private final long total;
         private final List<Map<String, Object>> rows;
 
-        PageResult(long total, List<Map<String, Object>> rows) {
+        public PageResult(long total, List<Map<String, Object>> rows) {
             this.total = total;
             this.rows = rows == null ? Collections.emptyList() : rows;
         }

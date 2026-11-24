@@ -159,6 +159,40 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
 
     <!-- ==================== 问答检索与 URL 来源 ==================== -->
 
+    <!-- 先限定可见资产，再按关键词匹配排序。只给入选候选加载正文。 -->
+    <select id="selectEvidenceCandidates" resultType="java.util.LinkedHashMap">
+        SELECT a.asset_id, a.asset_name, a.asset_type, a.description, a.domain_name, a.content
+        FROM wiki_asset a
+        JOIN (
+            SELECT w.asset_id,
+                <foreach collection="terms" item="term" separator=" + ">
+                    (CASE WHEN LOCATE(#{term}, LOWER(w.asset_name)) > 0 THEN 4 ELSE 0 END
+                    + CASE WHEN LOCATE(#{term}, LOWER(w.domain_name)) > 0 THEN 2 ELSE 0 END
+                    + CASE WHEN LOCATE(#{term}, LOWER(w.description)) > 0 THEN 1 ELSE 0 END
+                    + CASE WHEN LOCATE(#{term}, LOWER(w.content)) > 0 THEN 2 ELSE 0 END)
+                </foreach> AS match_score
+            FROM wiki_asset w
+            WHERE w.status = '0' AND COALESCE(w.tags, '') &lt;&gt; 'SYSTEM_INDEX'
+              AND w.content IS NOT NULL AND CHAR_LENGTH(TRIM(w.content)) > 0
+              AND (w.space_id IS NULL OR EXISTS
+                  (SELECT 1 FROM wiki_space s WHERE s.space_id = w.space_id AND s.status = '0'))
+            <if test="spaceId != null">AND w.space_id = #{spaceId}</if>
+            <choose>
+                <when test="assetScope">
+                    AND (w.asset_id = #{scopeId} OR w.tags = CONCAT('SOURCE:', #{scopeId}))
+                    AND EXISTS (SELECT 1 FROM wiki_asset root WHERE root.asset_id = #{scopeId}
+                        AND root.status = '0'
+                        AND (root.space_id = w.space_id OR (root.space_id IS NULL AND w.space_id IS NULL)))
+                </when>
+                <otherwise>AND w.asset_type &lt;&gt; 'URL'</otherwise>
+            </choose>
+            ORDER BY match_score DESC, w.asset_id DESC
+            LIMIT #{limit}
+        ) candidates ON a.asset_id = candidates.asset_id
+        WHERE candidates.match_score > 0
+        ORDER BY candidates.match_score DESC, a.asset_id DESC
+    </select>
+
     <!-- 单资产正文，用于生成证据片段 -->
     <select id="selectAssetContent" resultType="java.util.LinkedHashMap">
         SELECT content FROM wiki_asset WHERE asset_id = #{assetId}

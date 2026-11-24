@@ -66,6 +66,8 @@ public class QueryHistoryServiceTest {
         for (String key : Arrays.asList("question", "rows", "columns", "sql", "chartHint", "configHash")) assertEquals(response.get(key), messages.get(0).get(key));
         assertEquals(clarification.get("queryQuestion"), messages.get(1).get("queryQuestion"));
         assertEquals(clarification.get("clarification"), messages.get(1).get("clarification"));
+        assertEquals(clarification.get("clarification"), reloaded.latest("alice", 7, sessionId).get("clarification"));
+        assertTrue(reloaded.latest("alice", 7, "").isEmpty());
         assertEquals(1, items(reloaded.sessions("alice", 7, 1)).size());
     }
 

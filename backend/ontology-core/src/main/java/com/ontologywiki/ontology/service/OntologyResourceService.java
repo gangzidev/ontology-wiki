@@ -2,6 +2,7 @@ package com.ontologywiki.ontology.service;
 
 import com.ontologywiki.ontology.domain.OntologyResource;
 import com.ontologywiki.ontology.repository.OntologyResourceRepository;
+import com.ontologywiki.ontology.service.wiki.WikiChunkIndexService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,16 +38,29 @@ public class OntologyResourceService {
 
     private final OntologyResourceRepository repository;
     private final CredentialService credentials;
+    private final WikiChunkIndexService chunkIndexService;
 
     public OntologyResourceService(OntologyResourceRepository repository,
                                    CredentialService credentials) {
+        this(repository, credentials, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public OntologyResourceService(OntologyResourceRepository repository,
+                                   CredentialService credentials, WikiChunkIndexService chunkIndexService) {
         this.repository = repository;
         this.credentials = credentials;
+        this.chunkIndexService = chunkIndexService;
     }
 
     /** 工作台统计：各资源记录数 */
     public Map<String, Object> dashboardCounts() {
         return repository.countAll();
+    }
+
+    public Map<String, Object> rebuildWikiChunkIndexBatch(long afterAssetId, int limit) {
+        if (chunkIndexService == null) throw new IllegalStateException("Wiki 分块索引服务未配置");
+        return chunkIndexService.rebuildBatch(Math.max(0, afterAssetId), limit);
     }
 
     /**
@@ -118,6 +132,9 @@ public class OntologyResourceService {
         data.put("update_time", new Date());
 
         Long newId = repository.insert(resource, data);
+        if ("assets".equals(resourceKey) && newId != null && chunkIndexService != null) {
+            chunkIndexService.refreshAsset(newId);
+        }
         if (datasourcePassword != null && newId != null) {
             saveDatasourcePassword(newId, datasourcePassword);
         }
@@ -154,6 +171,9 @@ public class OntologyResourceService {
         data.put("update_time", new Date());
 
         int updated = repository.update(resource, id, data);
+        if ("assets".equals(resourceKey) && updated > 0 && chunkIndexService != null) {
+            chunkIndexService.refreshAsset(id);
+        }
         if (updated > 0 && resetProposalReview) {
             repository.resetProposalReview(id, STATUS_DRAFT);
         }
@@ -170,6 +190,7 @@ public class OntologyResourceService {
      * @param ids         逗号分隔的主键
      * @return 影响行数
      */
+    @Transactional(rollbackFor = Exception.class)
     public int delete(String resourceKey, String ids) {
         OntologyResource resource = OntologyResource.of(resourceKey);
         String[] parts = ids.split(",");
@@ -180,7 +201,11 @@ public class OntologyResourceService {
         for (String part : parts) {
             keys.add(Long.parseLong(part.trim()));
         }
-        return repository.deleteByIds(resource, keys);
+        int deleted = repository.deleteByIds(resource, keys);
+        if ("assets".equals(resourceKey) && chunkIndexService != null) {
+            for (Long id : keys) chunkIndexService.refreshAsset(id);
+        }
+        return deleted;
     }
 
     // ==================== 校验与转换 ====================

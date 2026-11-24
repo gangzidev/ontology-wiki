@@ -72,8 +72,9 @@
       <!-- 左侧数据目录：树节点点击后加入问题输入框。 -->
       <aside v-show="catalogVisible" id="query-catalog" class="dq-catalog-panel" :style="{ flexBasis: catalogWidth + 'px' }">
         <div class="dq-sidebar-tabs">
-          <button type="button" :class="{ active: sidebarTab === 'history' }" @click="sidebarTab = 'history'"><i class="el-icon-time" /> 查询历史</button>
-          <button type="button" :class="{ active: sidebarTab === 'catalog' }" @click="sidebarTab = 'catalog'"><i class="el-icon-price-tag" /> 数据目录</button>
+          <button type="button" :class="{ active: sidebarTab === 'history' }" @click="sidebarTab = 'history'"><i class="el-icon-time" /> 历史</button>
+          <button type="button" :class="{ active: sidebarTab === 'catalog' }" @click="sidebarTab = 'catalog'"><i class="el-icon-price-tag" /> 目录</button>
+          <button type="button" :class="{ active: sidebarTab === 'analysis' }" @click="sidebarTab = 'analysis'"><i class="el-icon-share" /> 分析</button>
           <button type="button" class="dq-sidebar-close" aria-label="关闭侧栏" @click="toggleCatalog"><i class="el-icon-close" /></button>
         </div>
         <div v-show="sidebarTab === 'history'" class="dq-history-panel">
@@ -111,7 +112,7 @@
           @node-click="onCatalogNodeClick"
         >
           <span slot-scope="{ node, data }" class="dq-tree-node">
-            <i :class="data.kind === 'metric' ? 'el-icon-data-analysis' : data.kind === 'dimension' ? 'el-icon-s-operation' : data.kind === 'timeDimension' ? 'el-icon-date' : 'el-icon-folder-opened'" />
+            <i :class="data.kind === 'group' ? 'el-icon-folder-opened' : data.kind === 'object' ? 'el-icon-s-grid' : data.kind === 'field' ? 'el-icon-document' : data.kind === 'metric' ? 'el-icon-data-analysis' : data.kind === 'dimension' ? 'el-icon-s-operation' : 'el-icon-date'" />
             <el-tooltip placement="right" effect="light" :disabled="data.kind === 'group' || !data.sourceText">
               <div slot="content" class="dq-tree-tooltip">{{ data.sourceText }}</div>
               <span class="dq-tree-label">{{ node.label }}</span>
@@ -119,6 +120,56 @@
           </span>
         </el-tree>
         <div v-else class="dq-catalog-empty"><i :class="catalogLoading ? 'el-icon-loading' : 'el-icon-folder-opened'" /><span>{{ catalogLoading ? '正在加载数据目录…' : '暂无数据目录' }}</span></div>
+        </div>
+        <div v-show="sidebarTab === 'analysis'" class="dq-analysis-content">
+          <div class="dq-catalog-panel-head">
+            <div><strong><i class="el-icon-share" /> 结构与关系</strong><small>基于当前已审核的本体配置</small></div>
+          </div>
+          <div class="dq-structure-summary">
+            <div><strong>{{ structureSummary.tableCount || 0 }}</strong><small>数据表</small></div>
+            <div><strong>{{ structureSummary.fieldCount || 0 }}</strong><small>字段</small></div>
+            <div><strong>{{ structureSummary.relationCount || 0 }}</strong><small>本体关系</small></div>
+          </div>
+          <div v-if="analysisSourceObjects.length" class="dq-analysis-sources">
+            <strong>本次查询涉及表</strong>
+            <el-tag v-for="object in analysisSourceObjects" :key="object.id" size="mini" effect="plain">{{ object.name || object.table }}</el-tag>
+          </div>
+          <p class="dq-analysis-note">关系可能来自数据库外键，也可能是名称推断；请查看证据和审核状态。这里不是字段级数据血缘，也不执行实时数据质量扫描。</p>
+          <el-collapse v-if="analysisObjects.length" class="dq-analysis-tables">
+            <el-collapse-item v-for="object in analysisObjects" :key="object.id" :name="String(object.id)">
+              <template slot="title"><i class="el-icon-s-grid" /> {{ object.name || object.table }} <small>{{ object.fields.length }} 个字段</small></template>
+              <p class="dq-analysis-table-name">{{ object.schema ? object.schema + '.' : '' }}{{ object.table }}</p>
+              <el-table :data="object.fields" size="mini" max-height="260" class="dq-analysis-field-table">
+                <el-table-column prop="name" label="字段" min-width="110"><template slot-scope="scope">{{ scope.row.name || scope.row.column }}</template></el-table-column>
+                <el-table-column prop="dataType" label="类型" min-width="90" />
+                <el-table-column prop="description" label="说明" min-width="130" show-overflow-tooltip />
+              </el-table>
+              <el-button type="text" size="mini" @click="exploreObject(object)">查询这张表</el-button>
+            </el-collapse-item>
+          </el-collapse>
+          <div v-else class="dq-catalog-empty"><i class="el-icon-warning-outline" /><span>当前配置没有可展示的表结构</span></div>
+          <div v-if="analysisProfiles.length" class="dq-relation-list">
+            <h4>已有抽样画像 <small>仅代表分析时抽取的样本，不是实时统计</small></h4>
+            <article v-for="profile in analysisProfiles" :key="profile.key || profile.table" class="dq-relation-card">
+              <strong>{{ profile.table }}</strong><p>样本 {{ profile.sampleCount }} 条</p>
+              <p v-for="column in (profile.columns || []).slice(0, 8)" :key="column.column" class="dq-profile-column">
+                <span>{{ column.column }}</span><span>非空 {{ column.nonNullCount }}/{{ profile.sampleCount }}</span><span>去重 {{ column.distinctCount }}</span><span>{{ column.cardinality }}</span>
+              </p>
+            </article>
+          </div>
+          <div class="dq-relation-list">
+            <h4>{{ analysisSourceObjectIds.length ? '涉及表之间的配置关系' : '关系与可达路径' }}</h4>
+            <article v-for="(relation, index) in analysisRelationsForSources" :key="relation.id || index" class="dq-relation-card">
+              <div class="dq-relation-title"><strong>{{ relation.sourceName || relation.sourceTable || relation.sourceObjectId }}</strong><i class="el-icon-right" /><strong>{{ relation.targetName || relation.targetTable || relation.targetObjectId }}</strong></div>
+              <p>{{ relation.sourceColumn || '—' }} → {{ relation.targetColumn || '—' }}<span v-if="relation.cardinality"> · {{ relation.cardinality }}</span></p>
+              <p class="dq-relation-evidence">{{ relation.evidence || relation.inferenceMethod || '关系定义未提供证据' }}</p>
+              <div class="dq-relation-actions">
+                <el-button v-if="relationQuestion(relation)" type="text" size="mini" @click="exploreRelation(relation)">按已配置口径查询</el-button>
+                <el-tag size="mini" :type="relation.reviewRequired || relation.status === 'NEEDS_REVIEW' ? 'warning' : 'info'">{{ relation.reviewRequired || relation.status === 'NEEDS_REVIEW' ? '待人工确认' : '配置关系' }}</el-tag>
+              </div>
+            </article>
+            <div v-if="!analysisRelationsForSources.length" class="dq-analysis-empty">暂无匹配的已配置对象关系</div>
+          </div>
         </div>
         <div class="dq-catalog-resizer" @mousedown.prevent="startCatalogResize" />
       </aside>
@@ -154,6 +205,7 @@
             :key="i"
             type="button"
             class="dq-example-btn"
+            :disabled="initializing || workspaceLoading || historyOpening || olderMessagesLoading || sending"
             @click="sendQuestion(ex)"
           >
             <i class="el-icon-chat-dot-round" />
@@ -218,9 +270,12 @@
             <div class="dq-result-header">
               <div class="dq-result-heading">
                 <span class="dq-result-icon"><i class="el-icon-data-analysis" /></span>
-                <div><h3>查询结果</h3><p>{{ (msg.rows || []).length }} 条记录<span v-if="msg.rows && msg.rows.length"> · 可切换视图或导出数据</span></p></div>
+                <div><h3>查询结果</h3><p>{{ (msg.rows || []).length }} 条记录<span v-if="msg.changedFields"> · {{ followUpSummary(msg.changedFields) }}</span><span v-else-if="msg.rows && msg.rows.length"> · 可切换视图或导出数据</span></p></div>
               </div>
-              <button v-if="msg.rows && msg.rows.length" type="button" class="dq-toolbar-btn" @click="exportRows(msg)"><i class="el-icon-download" /> 导出 CSV</button>
+              <div class="dq-result-actions">
+                <button v-if="msg.explanation && msg.explanation.sourceObjects && msg.explanation.sourceObjects.length" type="button" class="dq-toolbar-btn" @click="openStructureAnalysis(msg)"><i class="el-icon-share" /> 来源结构与关系</button>
+                <button v-if="msg.rows && msg.rows.length" type="button" class="dq-toolbar-btn" @click="exportRows(msg)"><i class="el-icon-download" /> 导出 CSV</button>
+              </div>
             </div>
             <div v-if="msg.plan" class="dq-plan-summary">
               <span v-if="msg.plan.detailObjectId"><b>数据表</b>{{ msg.explanation && msg.explanation.detailObject && (msg.explanation.detailObject.name || msg.explanation.detailObject.table) || msg.plan.detailObjectId }}</span>
@@ -291,6 +346,7 @@
                   :prop="col"
                   :label="(msg.columnLabels && msg.columnLabels[col]) || col"
                   min-width="180"
+                  show-overflow-tooltip
                 />
                 <el-table-column v-if="msg.plan && msg.plan.dimensions && msg.plan.dimensions.length && hasDrillTarget(msg)" label="分析" width="104">
                   <template slot-scope="scope">
@@ -359,13 +415,12 @@
           :rows="1"
           :autosize="{ minRows: 1, maxRows: 4 }"
           resize="none"
-          :placeholder="selectedProposalId ? '输入业务问题，Ctrl+Enter 发送…' : '请先选择本体配置'"
+          :placeholder="selectedProposalId ? '输入业务问题，Enter 发送，Shift+Enter 换行…' : '请先选择本体配置'"
           :disabled="!selectedProposalId || sending || workspaceLoading || historyOpening"
           maxlength="2000"
           aria-label="业务问题"
           class="dq-input"
-          @keydown.ctrl.enter.native.prevent="submit"
-          @keydown.meta.enter.native.prevent="submit"
+          @keydown.native="onQuestionKeydown"
         />
         <button
           type="button"
@@ -429,7 +484,9 @@ export default {
       resizingCatalog: false,
       catalogResizeStartX: 0,
       catalogResizeStartWidth: 252,
-      catalogTreeProps: { children: 'children', label: 'label' }
+      catalogTreeProps: { children: 'children', label: 'label' },
+      analysisSourceObjectIds: [],
+      analysisSourceRelations: []
     }
   },
   computed: {
@@ -449,19 +506,31 @@ export default {
       return this.proposals.filter(item => this.proposalLabel(item).toLowerCase().includes(keyword))
     },
     exampleQuestions() {
-      if (!this.catalog) return []
-      const metrics = (this.catalog.metrics || []).filter(item => item.name && !/[（(]|是否|标志|编码/.test(item.name))
-      const questions = (this.catalog.objects || []).slice(0, 1).map(item => `查看${item.name || item.table}的数据`)
-      for (const metric of metrics.slice(0, 2)) {
-        questions.push(`统计${metric.name}`)
-        const dimension = (this.catalog.dimensions || []).find(item => item.name && metric.objectId && item.objectId === metric.objectId)
-        if (dimension) questions.push(`按${dimension.name}统计${metric.name}`)
-      }
-      return questions.slice(0, 4)
+      return this.readiness && this.readiness.queryEnabled && this.catalog ? this.catalog.exampleQuestions || [] : []
     },
     catalogItemCount() {
       if (!this.catalog) return 0
       return ['objects', 'metrics', 'dimensions', 'timeDimensions'].reduce((total, key) => total + (this.catalog[key] || []).length, 0)
+    },
+    structureSummary() {
+      return this.catalog && this.catalog.structureSummary || {}
+    },
+    analysisObjects() {
+      return this.catalog && this.catalog.objects || []
+    },
+    analysisRelations() {
+      return this.catalog && this.catalog.relations || []
+    },
+    analysisProfiles() {
+      return this.catalog && this.catalog.dataProfiles || []
+    },
+    analysisSourceObjects() {
+      const selected = new Set(this.analysisSourceObjectIds.map(String))
+      return this.analysisObjects.filter(object => selected.has(String(object.id)))
+    },
+    analysisRelationsForSources() {
+      if (!this.analysisSourceObjectIds.length) return this.analysisRelations
+      return this.analysisSourceRelations
     },
     catalogTreeData() {
       if (!this.catalog) return []
@@ -768,6 +837,36 @@ export default {
         this.$nextTick(this.focusComposer)
       } else this.appendQuestion(data.name || data.id)
     },
+    exploreObject(object) {
+      if (!object || !object.table) return
+      const table = object.schema ? `${object.schema}.${object.table}` : object.table
+      this.inputText = `查看${table}的数据`
+      this.sidebarTab = 'catalog'
+      this.$nextTick(this.focusComposer)
+    },
+    openStructureAnalysis(message) {
+      this.catalogVisible = true
+      this.sidebarTab = 'analysis'
+      this.analysisSourceObjectIds = message && message.explanation && message.explanation.sourceObjects || []
+      this.analysisSourceRelations = message && message.explanation && message.explanation.sourceRelations || []
+      this.$nextTick(this.resizeResults)
+    },
+    relationQuestion(relation) {
+      const metrics = (this.catalog && this.catalog.metrics || []).filter(item => String(item.objectId) === String(relation.sourceObjectId))
+      const dimensions = (this.catalog && this.catalog.dimensions || []).filter(item => String(item.objectId) === String(relation.targetObjectId))
+      const reverseMetrics = (this.catalog && this.catalog.metrics || []).filter(item => String(item.objectId) === String(relation.targetObjectId))
+      const reverseDimensions = (this.catalog && this.catalog.dimensions || []).filter(item => String(item.objectId) === String(relation.sourceObjectId))
+      if (metrics.length === 1 && dimensions.length === 1) return `按${dimensions[0].name}统计${metrics[0].name}`
+      if (reverseMetrics.length === 1 && reverseDimensions.length === 1) return `按${reverseDimensions[0].name}统计${reverseMetrics[0].name}`
+      return ''
+    },
+    exploreRelation(relation) {
+      const question = this.relationQuestion(relation)
+      if (!question) return
+      this.inputText = question
+      this.sidebarTab = 'catalog'
+      this.$nextTick(this.focusComposer)
+    },
     filterTreeNode(value, data) {
       if (!value) return true
       if (data.kind === 'group') return (data.children || []).some(child => this.filterTreeNode(value, child))
@@ -920,21 +1019,36 @@ export default {
       this.sendQuestion(this.inputText.trim())
       this.inputText = ''
     },
+    onQuestionKeydown(event) {
+      if (event.isComposing || event.keyCode === 229 || event.key !== 'Enter' || event.shiftKey) return
+      event.preventDefault()
+      this.submit()
+    },
+    followUpSummary(fields) {
+      const labels = { metrics: '指标', dimensions: '分组', filters: '筛选', timeDimension: '时间口径', timeRange: '时间范围', timeGranularity: '时间粒度', orderBy: '排序', limit: '条数', comparison: '对比方式', detailObjectId: '明细表', fields: '展示字段' }
+      const changed = (fields || []).map(field => labels[field]).filter(Boolean)
+      return changed.length ? `沿用上一轮未修改的条件，更新：${changed.join('、')}` : '沿用上一轮查询条件'
+    },
     sendQuestion(question) {
       if (!this.selectedProposalId || this.sending || this.initializing || this.workspaceLoading || this.historyOpening || this.olderMessagesLoading) return
       if (!this.readiness || !this.readiness.queryEnabled) { this.showReadinessGuide(); return }
       const previous = this.messages[this.messages.length - 1]
-      const queryQuestion = previous && previous.type === 'clarification' && !previous.skipFollowUp
-        ? `${previous.queryQuestion || previous.question}\n补充说明：${question}` : question
-      if (queryQuestion.length > 2000) { this.$modal.msgWarning('补充后的问题超过2000字，请点击“另问一个问题”后重新提问'); return }
+      const newQuestion = !!(previous && previous.skipFollowUp)
       this.sending = true
       this.startQueryTimer()
-      const msg = { question, queryQuestion, type: 'loading', loading: true, viewMode: 'chart' }
+      const msg = { question, type: 'loading', loading: true, viewMode: 'chart' }
       this.messages.push(msg)
       this.$nextTick(this.scrollToLatestMessage)
       const idx = this.messages.length - 1
-      askDataQuery(this.selectedProposalId, queryQuestion, this.sessionId, question).then(({ data }) => {
-        Object.assign(msg, data || { type: 'error', error: '未收到有效响应' })
+      askDataQuery(this.selectedProposalId, question, this.sessionId, newQuestion).then(({ data }) => {
+        const valid = data && (
+          (data.type === 'result' && Array.isArray(data.rows)) ||
+          (data.type === 'preview' && data.plan) ||
+          (data.type === 'clarification' && typeof data.clarification === 'string' && data.clarification.trim()) ||
+          (data.type === 'error' && typeof data.error === 'string' && data.error.trim())
+        )
+        const response = valid ? data : { type: 'error', error: '未收到有效的查询响应，请重试' }
+        Object.assign(msg, response)
         msg.question = question
         msg.loading = false
         this.rememberResponse(data)
@@ -1134,6 +1248,33 @@ export default {
 .dq-toolbar-btn:disabled { opacity:.4; cursor:not-allowed; }
 .dq-catalog-panel { position:relative; display:flex; flex:0 0 252px; min-width:0; min-height:0; flex-direction:column; border:1px solid var(--aw-border); border-radius:12px; background:#fff; }
 .dq-catalog-content { display:flex; flex:1; min-height:0; flex-direction:column; padding:16px 12px; }
+.dq-analysis-content { display:flex; flex:1; min-height:0; flex-direction:column; gap:10px; overflow:auto; padding:16px 12px; }
+.dq-structure-summary { display:grid; grid-template-columns:repeat(3, 1fr); gap:6px; }
+.dq-structure-summary > div { display:flex; flex-direction:column; align-items:center; padding:9px 4px; border-radius:8px; background:#f3f7fc; }
+.dq-structure-summary strong { color:var(--aw-blue); font-size:17px; }
+.dq-structure-summary small { margin-top:3px; color:var(--aw-soft); font-size:10px; }
+.dq-analysis-note { margin:0; padding:9px; border-radius:7px; background:#fff8e6; color:#78652c; font-size:10px; line-height:1.6; }
+.dq-analysis-sources { display:flex; flex-wrap:wrap; align-items:center; gap:5px; }
+.dq-analysis-sources strong { flex-basis:100%; color:#4d5c70; font-size:11px; }
+.dq-analysis-tables { border-top:1px solid #edf0f4; }
+.dq-analysis-tables ::v-deep .el-collapse-item__header { gap:6px; height:auto; min-height:42px; line-height:1.5; font-size:12px; }
+.dq-analysis-tables ::v-deep .el-collapse-item__header > i { color:var(--aw-blue); }
+.dq-analysis-tables ::v-deep .el-collapse-item__header small { margin-left:auto; color:var(--aw-soft); font-size:10px; }
+.dq-analysis-tables ::v-deep .el-collapse-item__content { padding-bottom:8px; }
+.dq-analysis-table-name { margin:0 0 7px; color:var(--aw-soft); font-size:10px; }
+.dq-analysis-field-table { margin-bottom:5px; font-size:11px; }
+.dq-relation-list h4 { margin:8px 0; color:#31302e; font-size:12px; }
+.dq-relation-card { margin-bottom:8px; padding:10px; border:1px solid #e8edf3; border-radius:8px; background:#fff; }
+.dq-relation-title { display:flex; align-items:center; gap:5px; color:#344256; font-size:11px; }
+.dq-relation-title strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.dq-relation-title i { flex:none; color:var(--aw-blue); }
+.dq-relation-card p { margin:6px 0 0; color:#657182; font-size:10px; line-height:1.5; overflow-wrap:anywhere; }
+.dq-relation-card .dq-relation-evidence { color:#8490a0; }
+.dq-relation-list h4 small { display:block; margin-top:4px; color:var(--aw-soft); font-size:10px; font-weight:400; }
+.dq-profile-column { display:flex; flex-wrap:wrap; justify-content:space-between; gap:4px; padding-top:5px; border-top:1px solid #eff2f6; }
+.dq-relation-actions { display:flex; align-items:center; justify-content:space-between; margin-top:4px; }
+.dq-analysis-empty { padding:12px; color:var(--aw-soft); font-size:11px; text-align:center; }
+.dq-result-actions { display:flex; align-items:center; gap:7px; }
 .dq-catalog-panel-head { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; margin:0 4px 16px; }
 .dq-catalog-panel-head strong { display:block; color:#31302e; font-size:14px; }
 .dq-catalog-panel-head strong i { margin-right:5px; color:var(--aw-blue); }
@@ -1213,7 +1354,7 @@ export default {
 .dq-table-hint { margin:0 0 10px; color:var(--aw-soft); font-size:11px; }
 .dq-table-hint i { display:inline-block; transform:rotate(90deg); margin-right:4px; }
 .dq-result-table { width:100%; border:1px solid #e9edf2; border-radius:9px; color:#4b5563; }
-.dq-result-table ::v-deep .cell { white-space:pre-wrap; overflow-wrap:anywhere; word-break:normal; line-height:1.7; }
+.dq-result-table ::v-deep .cell { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; line-height:1.7; }
 .dq-result-table ::v-deep th.el-table__cell { background:#f5f7fa; color:#657182; font-size:12px; }
 .dq-result-table ::v-deep td.el-table__cell { padding:12px 0; border-bottom-color:#eef1f5; }
 .dq-result-table ::v-deep .el-table__body tr:hover > td { background:#f0f7ff; }

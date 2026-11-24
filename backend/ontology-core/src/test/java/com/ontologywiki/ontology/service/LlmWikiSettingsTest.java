@@ -4,10 +4,126 @@ import com.ontologywiki.ontology.config.OntologyIntegrationProperties;
 import org.junit.Assert;
 import org.junit.Test;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.ResponseEntity;
+import java.net.URI;
 
 import java.util.Map;
+import java.util.Collections;
+import java.lang.reflect.Proxy;
 
 public class LlmWikiSettingsTest {
+    @Test
+    public void healthReportsConfigurationWithoutCheckingModelConnectivity() {
+        Map<String,Object> config = new java.util.LinkedHashMap<>();
+        config.put("api_base_url", "http://localhost:11434");
+        config.put("api_key_enc", "encrypted-key");
+        config.put("provider_type", "OPENAI_COMPAT");
+        com.ontologywiki.ontology.mapper.LlmWikiAnalysisMapper mapper = (com.ontologywiki.ontology.mapper.LlmWikiAnalysisMapper) Proxy.newProxyInstance(
+                getClass().getClassLoader(), new Class<?>[]{com.ontologywiki.ontology.mapper.LlmWikiAnalysisMapper.class}, (proxy, method, args) -> {
+                    if ("selectEnabledSettings".equals(method.getName())) return Collections.singletonList(config);
+                    throw new AssertionError("Unexpected mapper call " + method.getName());
+                });
+        RestTemplate rest = new RestTemplate() {
+            @Override
+            public <T> ResponseEntity<T> exchange(URI url, HttpMethod method, HttpEntity<?> requestEntity, Class<T> responseType) {
+                throw new AssertionError("Configuration status must not call the model API");
+            }
+        };
+        LlmWikiClient client = new LlmWikiClient(new OntologyIntegrationProperties(), rest,
+                new com.ontologywiki.ontology.service.CredentialService("test-key"), mapper, null, null, null);
+
+        Assert.assertEquals(Collections.singletonMap("enabled", true), client.health());
+        config.clear();
+        Assert.assertEquals(Collections.singletonMap("enabled", false), client.health());
+    }
+
+    @Test
+    public void analysisUsesOllamaNativeChatProtocolFromSceneConfiguration() {
+        RecordingRestTemplate rest = new RecordingRestTemplate();
+
+        Map<String,Object> config = new java.util.LinkedHashMap<>();
+        config.put("id", 7L);
+        config.put("api_base_url", "http://localhost:11434");
+        config.put("model", "qwen3");
+        config.put("provider_type", "OLLAMA");
+        config.put("usage_scene", "ANALYSIS");
+        com.ontologywiki.ontology.mapper.LlmWikiAnalysisMapper mapper = (com.ontologywiki.ontology.mapper.LlmWikiAnalysisMapper) Proxy.newProxyInstance(
+                getClass().getClassLoader(), new Class<?>[]{com.ontologywiki.ontology.mapper.LlmWikiAnalysisMapper.class}, (proxy, method, args) -> {
+                    if ("selectEnabledSettings".equals(method.getName()) || "selectEnabledSettingByScene".equals(method.getName())) return Collections.singletonList(config);
+                    throw new AssertionError("Unexpected mapper call " + method.getName());
+                });
+        LlmWikiClient client = new LlmWikiClient(new OntologyIntegrationProperties(), rest,
+                new com.ontologywiki.ontology.service.CredentialService("test-key"), mapper, null, null, null);
+
+        Assert.assertEquals("订单分析说明", client.analysisCompletion("分析订单结构"));
+        Assert.assertEquals("http://localhost:11434/api/chat", rest.uri.toString());
+        Assert.assertEquals(HttpMethod.POST, rest.method);
+        Assert.assertFalse(rest.request.getHeaders().containsKey("Authorization"));
+        Map<?,?> body = (Map<?,?>) rest.request.getBody();
+        Assert.assertEquals(Boolean.FALSE, body.get("stream"));
+        Assert.assertEquals("qwen3", body.get("model"));
+        Assert.assertTrue(String.valueOf(body.get("messages")).contains("分析订单结构"));
+    }
+
+    private static class RecordingRestTemplate extends RestTemplate {
+        private URI uri;
+        private HttpMethod method;
+        private HttpEntity<?> request;
+        private String response = "{\"message\":{\"role\":\"assistant\",\"content\":\"订单分析说明\"},\"eval_count\":12}";
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public <T> ResponseEntity<T> exchange(URI url, HttpMethod method, HttpEntity<?> requestEntity, Class<T> responseType) {
+            this.uri = url;
+            this.method = method;
+            this.request = requestEntity;
+            return (ResponseEntity<T>) ResponseEntity.ok(response);
+        }
+    }
+
+    @Test
+    public void configurationProbeUsesSuppliedCompatibleModelAndLimitsPreview() {
+        RecordingRestTemplate rest = new RecordingRestTemplate();
+        String answer = String.join("", Collections.nCopies(201, "好"));
+        rest.response = "{\"choices\":[{\"message\":{\"content\":\"" + answer + "\"}}]}";
+        LlmWikiClient client = new LlmWikiClient(new OntologyIntegrationProperties(), rest, null, null, null, null, null);
+        Map<String, Object> probe = client.testModelConnection("http://localhost/v1/", " sample ", "draft",
+                "LOCAL_COMPAT", 42L, "WIKI");
+        Assert.assertEquals("http://localhost/v1/chat/completions", rest.uri.toString());
+        Assert.assertEquals("Bearer sample", rest.request.getHeaders().getFirst("Authorization"));
+        Assert.assertEquals(0, ((Map<?, ?>) rest.request.getBody()).get("temperature"));
+        Assert.assertEquals("draft", ((Map<?, ?>) rest.request.getBody()).get("model"));
+        Assert.assertEquals(true, probe.get("connected"));
+        Assert.assertEquals(answer.substring(0, 200), probe.get("responsePreview"));
+        Assert.assertEquals(42L, probe.get("settingId"));
+
+        rest.response = "{}";
+        probe = client.testModelConnection("http://localhost", "sample", "draft", "OLLAMA", null, null);
+        Assert.assertEquals("http://localhost/api/chat", rest.uri.toString());
+        Assert.assertFalse(rest.request.getHeaders().containsKey("Authorization"));
+        Assert.assertEquals(false, probe.get("connected"));
+        Assert.assertFalse(probe.containsKey("responsePreview"));
+    }
+
+    @Test
+    public void legacyChatPreservesConfiguredModelAndTemperatureLimit() {
+        OntologyIntegrationProperties properties = new OntologyIntegrationProperties();
+        properties.getLlmWiki().setEnabled(true);
+        properties.getLlmWiki().setApiBaseUrl("http://localhost/v1");
+        properties.getLlmWiki().setApiKey("sample");
+        properties.getLlmWiki().setModel("configured");
+        RecordingRestTemplate rest = new RecordingRestTemplate();
+        rest.response = "{\"choices\":[{\"message\":{\"content\":\"reply\"}}]}";
+        com.ontologywiki.ontology.service.llm.LlmClient client =
+                new com.ontologywiki.ontology.service.llm.LlmClient(properties, rest, new com.fasterxml.jackson.databind.ObjectMapper());
+        Assert.assertEquals("reply", client.chat("hello", 3));
+        Map<?, ?> body = (Map<?, ?>) rest.request.getBody();
+        Assert.assertEquals(2.0, body.get("temperature"));
+        Assert.assertEquals("configured", body.get("model"));
+    }
+
     @Test
     public void settingsResponseNeverIncludesApiKey() {
         OntologyIntegrationProperties properties = new OntologyIntegrationProperties();

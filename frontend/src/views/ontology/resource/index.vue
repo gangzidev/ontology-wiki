@@ -1,8 +1,7 @@
 <template>
   <div class="app-container">
     <el-alert v-if="resource==='assets'" title="先创建行业知识空间，再把资料归入对应行业。上传后点击「整理 Wiki」可让模型把原始文本结构化为 Wiki 页面，整理后的页面在问答和分析时召回更精准；未整理的原始文本也参与分析，但效果较弱。" type="info" :closable="false" class="notice" />
-    <el-alert v-if="resource==='datasources'" title="密码单独加密保存；扫描时可指定表名和样例条数，样例仅发送到已配置的模型 API。" type="info" :closable="false" class="notice" />
-    <el-alert v-if="resource==='analyses'" title="每个分析任务必须绑定一个行业知识空间；系统只读取该空间内的 Wiki 资产，不会混用其他行业资料。数据库结构仍从所选数据源独立扫描。" type="info" :closable="false" class="notice" />
+    <el-alert v-if="resource==='datasources'" title="密码单独加密保存；默认样例条数会用于分析任务，可在启动分析时调整为0至20条。样例只用于生成数据画像，敏感字段值会脱敏，原始样例不会直接发送给模型。" type="info" :closable="false" class="notice" />
     <el-form v-show="showSearch" :inline="true" :model="query" size="small">
       <el-form-item><el-input v-model="query.keyword" placeholder="名称 / 描述 / 类型" clearable @keyup.enter.native="search" /></el-form-item>
       <el-form-item><el-button type="primary" icon="el-icon-search" @click="search">搜索</el-button><el-button @click="reset">重置</el-button></el-form-item>
@@ -14,6 +13,7 @@
         <el-tag v-if="resource==='proposals' && query.taskId" size="small" closable @close="clearTaskFilter">来源任务：{{ proposalTaskName || ('任务 #' + query.taskId) }}</el-tag>
       </div>
       <div class="resource-toolbar-actions">
+        <el-button v-if="resource==='assets'" v-hasPermi="['ontology:assets:edit']" size="mini" :loading="chunkIndexRebuilding" @click="rebuildAssetChunkIndex">{{ chunkIndexRebuilding ? `已处理 ${chunkIndexProcessed} 项` : (chunkIndexCursor ? '继续重建分块索引' : '重建分块索引') }}</el-button>
         <el-radio-group v-if="resource==='assets'" v-model="assetView" size="mini" class="asset-view-switch">
           <el-radio-button label="list">资产列表</el-radio-button>
           <el-radio-button label="graph">关联图</el-radio-button>
@@ -23,7 +23,7 @@
     </div>
     <div v-if="resource==='assets' && assetView==='graph'" v-loading="assetGraphLoading" class="asset-graph-panel">
       <div class="asset-graph-note">
-        <span>连线表示原始资料已整理为关联 Wiki文档；点击节点可查看内容。</span>
+        <span>连线表示 Wiki 引用、整理来源或分析依据；点击节点可查看内容。未解析引用：{{ (assetGraph.unresolved || []).length }}</span>
         <div class="asset-graph-legend">
           <span><i class="asset-legend-dot original" />原始文档</span>
           <span><i class="asset-legend-dot wiki" />Wiki文档</span>
@@ -31,10 +31,11 @@
       </div>
       <div v-if="assetGraph.nodes && assetGraph.nodes.length" ref="assetGraphChart" class="asset-relation-graph" />
       <el-empty v-else :image-size="64" description="当前没有可展示的 Wiki 资产" />
+      <el-pagination v-if="assetGraph.total > assetGraph.pageSize" :current-page.sync="assetGraphPage.pageNum" :page-size="assetGraphPage.pageSize" :total="assetGraph.total" layout="prev, pager, next, total" @current-change="loadAssetGraph" />
     </div>
     <el-table v-if="resource!=='assets' || assetView==='list'" v-loading="loading" :data="rows" border class="resource-table">
       <el-table-column v-for="col in columns" :key="col.key" :prop="col.key" :label="col.key==='source_id' ? '数据源' : (col.key==='wiki_space_id' ? '行业知识空间' : (col.key==='review_by' ? '完成记录' : col.label))" min-width="130" show-overflow-tooltip><template slot-scope="s"><el-tag v-if="resource==='analyses' && col.key==='status'" size="mini" :type="analysisStatusType(s.row.status)">{{ analysisStatusText(s.row.status) }}</el-tag><el-tag v-else-if="resource==='proposals' && col.key==='status'" size="mini" :type="proposalStatusType(s.row.status)">{{ proposalStatusText(s.row.status) }}</el-tag><el-tag v-else-if="col.key==='status'" size="mini" :type="resourceStatusType(s.row.status)">{{ resourceStatusText(s.row.status) }}</el-tag><span v-else-if="resource==='proposals' && col.key==='proposal_type'">{{ proposalTypeText(s.row.proposal_type) }}</span><span v-else-if="resource==='proposals' && col.key==='review_by'">{{ s.row.review_by ? s.row.review_by + ' · ' + (s.row.review_time || '') : '尚未完成' }}</span><span v-else-if="resource==='assets' && col.key==='asset_type'"><el-tag size="mini" :type="s.row.asset_type==='WIKI_PAGE' ? 'success' : 'info'">{{ assetTypeText(s.row.asset_type) }}</el-tag></span><span v-else-if="resource==='datasources' && col.key==='db_type'">{{ datasourceTypeText(s.row.db_type) }}</span><span v-else>{{ col.key==='source_id' ? sourceName(s.row.source_id) : ((col.key==='space_id' || col.key==='wiki_space_id') ? spaceName(s.row[col.key]) : s.row[col.key]) }}</span></template></el-table-column>
-      <el-table-column label="操作" :width="actionWidth" fixed="right" class-name="action-cell"><template slot-scope="s"><el-button v-if="resource==='spaces'" v-hasPermi="['ontology:assets:list']" type="text" @click="openSpaceAssets(s.row)">查看资料</el-button><el-button v-if="resource==='spaces'" v-hasPermi="['ontology:dashboard:list']" type="text" @click="openScopedChat('SPACE',s.row.space_id)">行业问答</el-button><el-button v-if="resource==='assets'" v-hasPermi="[perm + ':query']" type="text" @click="viewAsset(s.row)">查看</el-button><el-button v-if="resource==='assets'" v-hasPermi="['ontology:dashboard:list']" type="text" @click="openScopedChat('ASSET',s.row.asset_id)">基于此资料问答</el-button><el-button v-if="resource==='assets' && s.row.asset_type!=='WIKI_PAGE' && s.row.asset_type!=='URL'" v-hasPermi="[perm + ':edit']" type="text" :disabled="!modelEnabled" :loading="String(ingestingAssetId) === String(s.row.asset_id)" :title="!modelEnabled ? '请先在「模型配置」中添加并启用模型' : ''" @click="ingest(s.row)">整理 Wiki</el-button><el-button v-if="resource==='datasources'" v-hasPermi="[perm + ':query']" type="text" @click="testSavedConnection(s.row)">测试连接</el-button><el-button v-if="resource==='datasources'" v-hasPermi="[perm + ':edit']" type="text" @click="credential(s.row)">设置密码</el-button><el-button v-if="resource==='datasources'" v-hasPermi="[perm + ':query']" type="text" @click="scan(s.row)">扫描</el-button><el-button v-if="resource==='analyses'" v-hasPermi="['ontology:dashboard:list']" type="text" @click="openScopedChat('ANALYSIS',s.row.task_id)">任务问答</el-button><el-button v-if="resource==='analyses' && ['RUNNING','FAILED','CANCELLED'].includes(s.row.status)" v-hasPermi="[perm + ':edit']" type="text" @click="reopenAnalysisProgress(s.row)">查看进度</el-button><el-button v-if="resource==='analyses'" v-hasPermi="[perm + ':edit']" type="text" :disabled="s.row.status==='RUNNING' || !modelEnabled" :title="!modelEnabled ? '请先在「模型配置」中添加并启用模型' : ''" @click="analyze(s.row)">{{ s.row.status==='RUNNING' ? '分析中…' : (s.row.status==='DONE' ? '重新分析并生成版本' : '执行分析') }}</el-button><el-button v-if="resource==='analyses' && s.row.status==='DONE'" v-hasPermi="['ontology:proposals:list']" type="text" @click="openTaskProposal(s.row)">配置草案</el-button><el-button v-if="resource==='proposals'" v-hasPermi="[perm + ':query']" type="text" @click="viewProposal(s.row)">查看</el-button><el-button v-if="resource==='proposals'" v-hasPermi="[perm + ':query']" type="text" @click="openProposalVersions(s.row)">版本列表</el-button><el-button v-if="resource==='proposals' && s.row.status==='DRAFT'" v-hasPermi="[perm + ':edit']" type="text" @click="completeProposalRow(s.row)">草案完成</el-button><el-button v-if="resource==='proposals'" v-hasPermi="[perm + ':query']" type="text" @click="downloadProposal(s.row,'rdf')">导出 RDF/OWL</el-button><el-button v-if="resource==='proposals'" v-hasPermi="[perm + ':query']" type="text" @click="downloadProposal(s.row,'project')">导出工程</el-button><el-button v-hasPermi="[perm + ':edit']" type="text" @click="edit(s.row)">{{ resource==='proposals' ? '高级编辑' : '编辑' }}</el-button><el-button v-hasPermi="[perm + ':remove']" type="text" @click="remove(s.row)">删除</el-button></template></el-table-column>
+      <el-table-column label="操作" :width="actionWidth" fixed="right" class-name="action-cell"><template slot-scope="s"><el-button v-if="resource==='spaces'" v-hasPermi="['ontology:assets:list']" type="text" @click="openSpaceAssets(s.row)">查看资料</el-button><el-button v-if="resource==='spaces'" v-hasPermi="['ontology:dashboard:list']" type="text" @click="openScopedChat('SPACE',s.row.space_id)">行业问答</el-button><el-button v-if="resource==='assets'" v-hasPermi="[perm + ':query']" type="text" @click="viewAsset(s.row)">查看</el-button><el-button v-if="resource==='assets'" v-hasPermi="['ontology:dashboard:list']" type="text" @click="openScopedChat('ASSET',s.row.asset_id)">基于此资料问答</el-button><el-button v-if="resource==='assets' && s.row.asset_type!=='WIKI_PAGE' && s.row.asset_type!=='URL'" v-hasPermi="[perm + ':edit']" type="text" :disabled="!modelEnabled" :loading="String(ingestingAssetId) === String(s.row.asset_id)" :title="!modelEnabled ? '请先在「模型配置」中添加并启用模型' : ''" @click="ingest(s.row)">整理 Wiki</el-button><el-button v-if="resource==='datasources'" v-hasPermi="[perm + ':query']" type="text" @click="testSavedConnection(s.row)">测试连接</el-button><el-button v-if="resource==='datasources'" v-hasPermi="[perm + ':edit']" type="text" @click="credential(s.row)">设置密码</el-button><el-button v-if="resource==='datasources'" v-hasPermi="[perm + ':query']" type="text" @click="scan(s.row)">扫描</el-button><template v-if="resource==='analyses'"><el-button v-hasPermi="[perm + ':query']" type="text" @click="reopenAnalysisProgress(s.row)">查看进度</el-button><el-dropdown v-hasPermi="[perm + ':edit']" trigger="click" @command="handleAnalysisCommand($event,s.row)"><el-button type="text" aria-label="更多分析任务操作"><i class="el-icon-more" /></el-button><el-dropdown-menu slot="dropdown"><el-dropdown-item v-if="s.row.status!=='RUNNING'" command="reanalyze" :disabled="!modelEnabled">重新分析</el-dropdown-item><el-dropdown-item v-if="s.row.status!=='RUNNING'" command="edit">编辑</el-dropdown-item><el-dropdown-item command="delete">删除</el-dropdown-item></el-dropdown-menu></el-dropdown></template><template v-if="resource==='proposals'"><el-button v-hasPermi="[perm + ':query']" type="text" @click="viewProposal(s.row)">查看</el-button><el-button v-hasPermi="[perm + ':query']" type="text" @click="openProposalVersions(s.row)">版本列表</el-button><el-button v-if="s.row.status==='DRAFT'" v-hasPermi="[perm + ':edit']" type="text" @click="completeProposalRow(s.row)">草案完成</el-button><el-button v-hasPermi="[perm + ':query']" type="text" @click="downloadProposal(s.row,'rdf')">导出 RDF/OWL</el-button><el-dropdown trigger="click" @command="handleProposalCommand($event,s.row)"><el-button type="text" aria-label="更多草案操作"><i class="el-icon-more" /></el-button><el-dropdown-menu slot="dropdown"><el-dropdown-item v-hasPermi="[perm + ':query']" command="project">导出工程</el-dropdown-item><el-dropdown-item v-hasPermi="[perm + ':remove']" command="delete">删除</el-dropdown-item></el-dropdown-menu></el-dropdown></template><el-button v-if="!['analyses','proposals'].includes(resource)" v-hasPermi="[perm + ':edit']" type="text" @click="edit(s.row)">编辑</el-button><el-button v-if="!['analyses','proposals'].includes(resource)" v-hasPermi="[perm + ':remove']" type="text" @click="remove(s.row)">删除</el-button></template></el-table-column>
     </el-table>
     <pagination v-show="total>0 && (resource!=='assets' || assetView==='list')" :total="total" :page.sync="query.pageNum" :limit.sync="query.pageSize" @pagination="load" />
     <el-dialog v-if="resource==='assets'" :title="form.id ? '编辑资料' : '新增资料'" :visible.sync="open" width="720px" append-to-body>
@@ -103,7 +104,7 @@
       <pagination v-show="proposalVersionTotal>0" :total="proposalVersionTotal" :page.sync="proposalVersionPage.pageNum" :limit.sync="proposalVersionPage.pageSize" @pagination="loadProposalVersions" />
       <span slot="footer"><el-button @click="proposalVersionsOpen=false">关闭</el-button></span>
     </el-dialog>
-    <el-dialog title="分析进度" :visible.sync="analysisProgress.visible" width="680px" append-to-body :close-on-click-modal="false" :show-close="true">
+    <el-dialog title="分析进度与执行记录" :visible.sync="analysisProgress.visible" width="860px" append-to-body :close-on-click-modal="false" :show-close="true" @close="refreshAnalysisListOnClose">
       <el-alert v-if="analysisProgress.status==='RUNNING'" title="分析在后台进行，可关闭此窗口。任务完成后列表会更新状态，也可点击「查看进度」重新打开。" type="info" :closable="false" class="analysis-progress-tip" />
       <div class="analysis-progress-current"><i v-if="analysisProgress.status==='RUNNING'" class="el-icon-loading"/><i v-else-if="analysisProgress.status==='DONE'" class="el-icon-circle-check"/><i v-else class="el-icon-circle-close"/><span>{{ analysisProgress.message }}</span><small>已用时 {{ analysisProgress.elapsedSeconds }} 秒</small></div>
       <el-steps :active="Math.max((analysisProgress.step || 1)-1, 0)" finish-status="success" simple class="analysis-progress-steps">
@@ -111,7 +112,29 @@
       </el-steps>
       <div class="analysis-progress-log"><div v-for="(item,index) in analysisProgress.logs" :key="index"><time>{{ item.time }}</time><span>{{ item.message }}</span></div></div>
       <el-alert v-if="['FAILED','CANCELLED','INTERRUPTED'].includes(analysisProgress.status)" :title="analysisProgress.error || '分析失败，请检查数据源和模型服务状态。'" type="error" :closable="false" />
-      <span slot="footer"><el-button v-if="analysisProgress.status==='RUNNING'" type="danger" plain @click="cancelCurrentAnalysis">取消分析</el-button><el-button v-if="analysisProgress.resumable" type="primary" @click="resumeCurrentAnalysis">从检查点继续</el-button><el-button v-if="analysisProgress.status==='DONE'" type="primary" :disabled="!analysisResult.proposalConfig" @click="openAnalysisResult">查看分析结果</el-button><el-button v-if="analysisProgress.status==='RUNNING'" @click="analysisProgress.visible=false">关闭（后台继续）</el-button><el-button v-if="analysisProgress.status!=='RUNNING'" @click="analysisProgress.visible=false">关闭</el-button></span>
+      <analysis-run-history v-if="analysisProgress.taskId" ref="analysisRunHistory" embedded :task-id="analysisProgress.taskId" :visible="analysisProgress.visible" />
+      <span slot="footer"><el-button v-if="analysisProgress.status==='RUNNING'" type="danger" plain @click="cancelCurrentAnalysis">取消分析</el-button><el-button v-if="analysisProgress.resumable" type="primary" @click="resumeCurrentAnalysis">从检查点继续</el-button><el-button v-if="analysisProgress.status==='DONE'" type="primary" :disabled="!analysisResult.proposalConfig" @click="openAnalysisResult">查看分析结果</el-button><el-button @click="closeAnalysisProgress">{{ analysisProgress.status==='RUNNING' ? '关闭（后台继续）' : '关闭' }}</el-button></span>
+    </el-dialog>
+    <el-dialog title="选择数据库分析范围" :visible.sync="tablePicker.visible" width="860px" append-to-body :close-on-click-modal="false">
+      <el-alert title="勾选表后只读取选中表结构并生成候选。Schema 与表名共同标识对象，支持搜索和分页选择。样例最多每表20条，并按字段名脱敏；选择分析整个数据源时也会沿用当前样例条数。" type="info" :closable="false" style="margin-bottom:14px" />
+      <div class="table-picker-toolbar">
+        <el-input v-model="tablePicker.keyword" size="small" clearable placeholder="搜索表名、Schema 或注释" @keyup.enter.native="searchAnalysisTables" />
+        <el-button size="small" icon="el-icon-search" @click="searchAnalysisTables">搜索</el-button>
+        <span>匹配 {{ tablePicker.total }} 张，已选 {{ tablePicker.selectedKeys.length }} 张</span>
+      </div>
+      <el-table v-loading="tablePicker.loading" :data="tablePicker.rows" border max-height="420">
+        <el-table-column label="选择" width="60" align="center"><template slot-scope="s"><el-checkbox :value="tablePicker.selectedKeys.includes(tableKey(s.row))" @change="toggleAnalysisTable(s.row, $event)" /></template></el-table-column>
+        <el-table-column label="Schema" prop="schema" width="180" show-overflow-tooltip />
+        <el-table-column label="表 / 视图" prop="name" min-width="220" show-overflow-tooltip />
+        <el-table-column label="类型" prop="type" width="100" />
+        <el-table-column label="注释" prop="comment" min-width="220" show-overflow-tooltip />
+      </el-table>
+      <div class="table-picker-footer">
+        <span>样例数据条数</span><el-input-number v-model="tablePicker.sampleLimit" size="small" :min="0" :max="20" />
+        <span class="form-tip">0 表示不读取业务样例；默认值来自数据源配置。</span>
+        <el-pagination :current-page.sync="tablePicker.pageNum" :page-size="tablePicker.pageSize" :total="tablePicker.total" layout="prev, pager, next, total" @current-change="loadAnalysisTables" />
+      </div>
+      <span slot="footer"><el-button @click="tablePicker.visible=false">取消</el-button><el-button :disabled="!tablePicker.selectedKeys.length" type="primary" @click="startSelectedAnalysis">分析选中表（{{ tablePicker.selectedKeys.length }}）</el-button><el-button v-if="tablePicker.mode!=='INCREMENTAL'" type="warning" plain @click="startAllTablesAnalysis">分析整个数据源</el-button></span>
     </el-dialog>
     <el-dialog v-if="resource!=='assets'" :title="form.id ? '编辑' + title : '新增' + title" :visible.sync="open" width="720px" append-to-body>
       <el-alert v-if="resource==='analyses' && !datasourceOptions.length" title="请先在数据源管理中配置并测试数据源，再创建分析任务。" type="warning" :closable="false" style="margin-bottom:16px" />
@@ -307,20 +330,21 @@
   </div>
 </template>
 <script>
-import { listResource, getResource, getAssetGraph, addResource, updateResource, deleteResource, setDatasourceCredential, testDatasource, scanDatasource, analyzeTask, getAnalysisJob, cancelAnalysisJob, resumeAnalysisJob, getLatestAnalysisResult, completeProposal, exportProposal, proposalDiff, rollbackProposal, ingestWikiAsset, getAnalysisContext } from '@/api/ontology'
+import { listResource, getResource, getAssetGraph, rebuildAssetChunkIndex, addResource, updateResource, deleteResource, setDatasourceCredential, testDatasource, scanDatasource, listDatasourceTables, analyzeTask, getAnalysisJob, cancelAnalysisJob, resumeAnalysisJob, getLatestAnalysisResult, completeProposal, exportProposal, proposalDiff, rollbackProposal, ingestWikiAsset, getAnalysisContext } from '@/api/ontology'
 import * as echarts from 'echarts'
 import OntologyQueryEvaluation from '@/components/OntologyQueryEvaluation'
+import AnalysisRunHistory from './AnalysisRunHistory'
 const configs = {
   spaces: { title: '行业知识空间', fields: [{ key: 'space_name', label: '行业 / 业务域名称', required: true }, { key: 'description', label: '说明', long: true }, { key: 'status', label: '状态', options: [{label:'正常',value:'0'},{label:'停用',value:'1'}] }] },
   assets: { title: 'Wiki资产', fields: [{ key: 'asset_name', label: '资料名称', required: true }, { key: 'space_id', label: '所属行业知识空间', required: true }, { key: 'asset_type', label: '资料类型', options: [{label:'文本',value:'TEXT'},{label:'文件',value:'FILE'}] }, { key: 'description', label: '备注' }] },
   datasources: { title: '数据源', fields: [{ key: 'name', label: '名称', required: true }, { key: 'db_type', label: '数据库类型', required: true }, { key: 'host', label: '主机地址' }, { key: 'port', label: '端口' }, { key: 'database_name', label: '数据库名' }, { key: 'schema_name', label: 'Schema' }, { key: 'jdbc_url', label: 'JDBC URL' }, { key: 'username', label: '用户名' }, { key: 'password', label: '数据库密码', secret: true, hidden: true, placeholder: '编辑已有数据源可留空，使用已保存密码' }, { key: 'sample_limit', label: '默认样例条数' }, { key: 'description', label: '说明', long: true }] },
-  analyses: { title: '分析任务', fields: [{ key: 'task_name', label: '任务名称', required: true }, { key: 'source_id', label: '关联数据源', required: true }, { key: 'wiki_space_id', label: '分析行业', required: true }, { key: 'scope', label: '分析范围', long: true }, { key: 'status', label: '状态', formHidden: true, options: ['DRAFT','READY','RUNNING','DONE','FAILED'].map(x => ({ label:x, value:x })) }, { key: 'summary', label: '分析结论', formHidden: true, long: true }] },
+  analyses: { title: '分析任务', fields: [{ key: 'task_name', label: '任务名称', required: true }, { key: 'source_id', label: '关联数据源', required: true }, { key: 'wiki_space_id', label: '分析行业', required: true }, { key: 'scope', label: '业务目标说明', hidden: true, formHidden: true, long: true }, { key: 'status', label: '状态', formHidden: true, options: ['DRAFT','READY','RUNNING','DONE','FAILED'].map(x => ({ label:x, value:x })) }, { key: 'summary', label: '分析结论', formHidden: true, long: true }] },
   proposals: { title: '配置草案', fields: [{ key: 'proposal_name', label: '草案名称', required: true }, { key: 'proposal_type', label: '配置类型', required: true, options: [{label:'本体配置包',value:'ONTOLOGY_BUNDLE'},{label:'对象',value:'对象'},{label:'逻辑',value:'逻辑'},{label:'动作',value:'动作'},{label:'关系',value:'关系'}] }, { key: 'task_name', label: '来源分析任务', formHidden: true }, { key: 'task_id', label: '来源任务编号', formHidden: true, hidden: true }, { key: 'config_json', label: '配置JSON', long: true, json: true, hidden: true }, { key: 'status', label: '状态', formHidden: true }, { key: 'review_by', label: '审核人', formHidden: true }, { key: 'review_time', label: '审核时间', formHidden: true, hidden: true }, { key: 'review_comment', label: '审核意见', formHidden: true, hidden: true }] },
 }
 export default {
   name: 'OntologyResource',
-  components: { OntologyQueryEvaluation },
-  data() { const raw = this.$route.path.split('/').filter(Boolean).pop(); const aliases={datasource:'datasources',analysis:'analyses',proposal:'proposals',space:'spaces',asset:'assets'}; const key = aliases[raw] || raw; const c = configs[key] || configs.assets; const ids={spaces:'space_id',assets:'asset_id',datasources:'datasource_id',analyses:'task_id',proposals:'proposal_id'}; const idLabels={spaces:'空间编号',assets:'资料编号',datasources:'数据源编号',analyses:'任务编号',proposals:'草案编号'}; return { resource: key, title: c.title, fields: c.fields, columns: [{key:ids[key],label:idLabels[key]}, ...c.fields.filter(f => !f.hidden)], rows:[], total:0, loading:false, testing:false, showSearch:true, open:false, assetView:'list', assetGraphLoading:false, assetGraph:{nodes:[],edges:[]}, assetGraphChart:null, ingestingAssetId:'', wikiIngestion:{ visible:false, status:'', asset:null, message:'' }, connectionMode:'host', jdbcUrlError:'', assetPreviewOpen:false, assetPreview:{}, wikiResultOpen:false, wikiResult:{}, analysisProgress:{ visible:false, status:'', step:1, message:'', elapsedSeconds:0, error:'', logs:[] }, analysisProgressTimer:null, analysisStartedAt:0, analysisOpen:false, analysisTab:'objects', analysisResult:{}, analysisConfig:{}, graphChart:null, proposalTaskName:'', highConfidenceOnly:false, proposalContext:null, diffOpen:false, diffLoading:false, diffInfo:{}, proposalVersionsOpen:false, proposalVersionsLoading:false, proposalVersions:[], proposalVersionTotal:0, proposalVersionTaskId:null, proposalVersionPage:{pageNum:1,pageSize:20}, datasourceOptions:[], spaceOptions:[], assetInputMode:'text', assetFileName:'', query:{ pageNum:1,pageSize:20,keyword:'',spaceId:undefined,taskId:undefined }, form:{}, rules:Object.fromEntries(c.fields.filter(f => f.required).map(f => [f.key,[{required:true,message:f.label+'不能为空',trigger:'blur'}]])) } },
+  components: { OntologyQueryEvaluation, AnalysisRunHistory },
+  data() { const raw = this.$route.path.split('/').filter(Boolean).pop(); const aliases={datasource:'datasources',analysis:'analyses',proposal:'proposals',space:'spaces',asset:'assets'}; const key = aliases[raw] || raw; const c = configs[key] || configs.assets; const ids={spaces:'space_id',assets:'asset_id',datasources:'datasource_id',analyses:'task_id',proposals:'proposal_id'}; const idLabels={spaces:'空间编号',assets:'资料编号',datasources:'数据源编号',analyses:'任务编号',proposals:'草案编号'}; return { resource: key, title: c.title, fields: c.fields, columns: [{key:ids[key],label:idLabels[key]}, ...c.fields.filter(f => !f.hidden)], rows:[], total:0, loading:false, testing:false, showSearch:true, open:false, tablePicker:{visible:false,loading:false,task:null,mode:'FULL',keyword:'',pageNum:1,pageSize:50,rows:[],total:0,selectedKeys:[],sampleLimit:0}, assetView:'list', assetGraphLoading:false, assetGraphPage:{pageNum:1,pageSize:50}, chunkIndexRebuilding:false, chunkIndexCursor:Number(sessionStorage.getItem('wikiAssetChunkCursor') || 0), chunkIndexProcessed:Number(sessionStorage.getItem('wikiAssetChunkProcessed') || 0), assetGraph:{nodes:[],edges:[],unresolved:[],total:0,pageSize:50}, assetGraphChart:null, ingestingAssetId:'', wikiIngestion:{ visible:false, status:'', asset:null, message:'' }, connectionMode:'host', jdbcUrlError:'', assetPreviewOpen:false, assetPreview:{}, wikiResultOpen:false, wikiResult:{}, analysisProgress:{ visible:false, status:'', step:1, message:'', elapsedSeconds:0, error:'', logs:[] }, analysisProgressTimer:null, analysisStartedAt:0, analysisOpen:false, analysisTab:'objects', analysisResult:{}, analysisConfig:{}, graphChart:null, proposalTaskName:'', highConfidenceOnly:false, proposalContext:null, diffOpen:false, diffLoading:false, diffInfo:{}, proposalVersionsOpen:false, proposalVersionsLoading:false, proposalVersions:[], proposalVersionTotal:0, proposalVersionTaskId:null, proposalVersionPage:{pageNum:1,pageSize:20}, datasourceOptions:[], spaceOptions:[], assetInputMode:'text', assetFileName:'', query:{ pageNum:1,pageSize:20,keyword:'',spaceId:undefined,taskId:undefined }, form:{}, rules:Object.fromEntries(c.fields.filter(f => f.required).map(f => [f.key,[{required:true,message:f.label+'不能为空',trigger:'blur'}]])) } },
   filters: { shortText(value) { const text=String(value || ''); return text.length>100 ? text.slice(0,100)+'…' : text } },
   computed: {
     perm() { return 'ontology:' + this.resource },
@@ -336,7 +360,7 @@ export default {
     },
     /** 操作列宽度按当前资源实际按钮数收缩，避免统一 740px 在按钮少的页面留下大片空白 */
     actionWidth() {
-      return { spaces: 240, assets: 360, datasources: 300, analyses: 420, proposals: 720, imports: 120 }[this.resource] || 240
+      return { spaces: 240, assets: 360, datasources: 300, analyses: 190, proposals: 390, imports: 120 }[this.resource] || 240
     }
   },
   watch: { analysisTab(value) { if (value === 'graph') this.$nextTick(this.renderGraph) }, assetView(value) { if (value === 'graph') this.loadAssetGraph() } },
@@ -344,9 +368,13 @@ export default {
   beforeDestroy() { this.stopAnalysisProgress(); if (this.graphChart) this.graphChart.dispose(); if (this.assetGraphChart) this.assetGraphChart.dispose() },
   methods: {
     load() { this.loading=true; return listResource(this.resource,this.query).then(r => { this.rows=r.rows || []; this.total=r.total || 0 }).finally(() => { this.loading=false }) },
-    loadAssetGraph() { if (this.resource!=='assets' || this.assetGraphLoading) return; this.assetGraphLoading=true; getAssetGraph(this.query.spaceId ? { spaceId:this.query.spaceId } : undefined).then(({data}) => { this.assetGraph=data || {nodes:[],edges:[]}; this.$nextTick(this.renderAssetGraph) }).catch(() => { this.assetGraph={nodes:[],edges:[]}; this.$modal.msgError('资产关联图加载失败') }).finally(() => { this.assetGraphLoading=false }) },
+    loadAssetGraph(pageNum) { if (this.resource!=='assets') return; if (pageNum) this.assetGraphPage.pageNum=pageNum; if (this.assetGraphLoading) return; this.assetGraphLoading=true; getAssetGraph(Object.assign({ pageNum:this.assetGraphPage.pageNum, pageSize:this.assetGraphPage.pageSize }, this.query.spaceId ? { spaceId:this.query.spaceId } : {})).then(({data}) => { this.assetGraph=data || {nodes:[],edges:[],total:0}; this.$nextTick(this.renderAssetGraph) }).catch(() => { this.assetGraph={nodes:[],edges:[],unresolved:[],total:0}; this.$modal.msgError('资产关联图加载失败') }).finally(() => { this.assetGraphLoading=false }) },
+    rebuildAssetChunkIndex() { if (this.chunkIndexRebuilding) return; this.chunkIndexRebuilding=true; this.runChunkIndexBatch(this.chunkIndexCursor, this.chunkIndexProcessed) },
+    runChunkIndexBatch(afterAssetId, processed) { rebuildAssetChunkIndex({ afterAssetId, limit:100 }).then(({data}) => { const result=data || {}; const nextCursor=Number(result.afterAssetId || afterAssetId); const count=Number(result.processed || 0); this.chunkIndexCursor=Boolean(result.complete) ? 0 : nextCursor; const total=processed+count; this.chunkIndexProcessed=total; if (result.complete || count===0) { this.chunkIndexRebuilding=false; this.chunkIndexProcessed=0; sessionStorage.removeItem('wikiAssetChunkCursor'); sessionStorage.removeItem('wikiAssetChunkProcessed'); this.$modal.msgSuccess(`分块索引已处理 ${total} 项`); return } sessionStorage.setItem('wikiAssetChunkCursor', String(nextCursor)); sessionStorage.setItem('wikiAssetChunkProcessed', String(total)); this.runChunkIndexBatch(nextCursor, total) }).catch(() => { this.chunkIndexRebuilding=false; this.$modal.msgError(`分块索引处理中断，已处理 ${this.chunkIndexProcessed} 项，可继续重建`) }) },
+    handleAnalysisCommand(command, row) { if (command === 'reanalyze') this.analyze(row); else if (command === 'edit') this.edit(row); else if (command === 'delete') this.remove(row) },
+    handleProposalCommand(command, row) { if (command === 'project') this.downloadProposal(row, 'project'); else if (command === 'delete') this.remove(row) },
     renderAssetGraph() { const box=this.$refs.assetGraphChart; if (!box || !this.assetGraph.nodes.length) return; if (this.assetGraphChart) this.assetGraphChart.dispose(); this.assetGraphChart=echarts.init(box); this.assetGraphChart.setOption({ animationDuration:350, tooltip:{ formatter:params => params.dataType==='edge' ? (params.data.name || '关联资产') : `${params.data.name}<br/>${this.assetTypeText(params.data.assetType)}` }, series:[{ type:'graph', layout:'force', roam:true, draggable:true, data:this.assetGraph.nodes.map(item => ({ id:String(item.id), assetId:item.assetId, name:item.name, assetType:item.assetType, symbolSize:item.assetType==='WIKI_PAGE'?54:44, itemStyle:{ color:item.assetType==='WIKI_PAGE'?'#0075de':'#c28b55' } })), links:this.assetGraph.edges, force:{ repulsion:240, edgeLength:150 }, label:{ show:true, color:'#31302e', fontSize:12 }, lineStyle:{ color:'#a39e98', opacity:.75, width:1.5 }, edgeLabel:{ show:true, formatter:params => params.data.name || '', color:'#716b66', fontSize:10 } }] }); this.assetGraphChart.off('click'); this.assetGraphChart.on('click', params => { if (params.dataType==='node' && params.data.assetId) this.viewAsset({asset_id:params.data.assetId}) }) },
-    clearSpaceFilter() { this.query.spaceId=undefined; const query=Object.assign({},this.$route.query); delete query.spaceId; this.$router.replace({query}).catch(() => {}); this.load() },
+    clearSpaceFilter() { this.query.spaceId=undefined; this.assetGraphPage.pageNum=1; const query=Object.assign({},this.$route.query); delete query.spaceId; this.$router.replace({query}).catch(() => {}); this.load(); if (this.assetView==='graph') this.loadAssetGraph(1) },
     clearTaskFilter() { this.query.taskId=undefined; this.proposalTaskName=''; this.query.pageNum=1; const query=Object.assign({},this.$route.query); delete query.taskId; delete query.taskName; this.$router.replace({ path:this.$route.path, query }).catch(() => {}); this.load() },
     openSpaceAssets(row) { this.$router.push({ path:'/knowledge/assets', query:{ spaceId:row.space_id } }) },
     openScopedChat(type, id) { const query={ scopeType:type, scopeId:String(id) }; if (type==='SPACE') query.spaceId=String(id); this.$router.push({ path:'/knowledge/chat', query }) },
@@ -434,7 +462,7 @@ export default {
     credential(row) { this.$prompt('请输入数据库密码', '设置密码', { inputType: 'password' }).then(({ value }) => setDatasourceCredential(row.datasource_id, value)).then(() => this.$modal.msgSuccess('密码已保存')).catch(() => {}) },
     scan(row) { this.$prompt('输入要取样的表名（逗号分隔，可留空只看结构）', '扫描数据源', { inputValue: '', inputPlaceholder: 'orders,customers' }).then(({ value }) => scanDatasource(row.datasource_id, value ? { tables: value.split(',').map(x => x.trim()).filter(Boolean), sampleLimit: Number(row.sample_limit || 0) } : {})).then(({ data }) => this.$alert('<pre style="max-height:520px;overflow:auto">' + this.escape(JSON.stringify(data, null, 2)) + '</pre>', '扫描结果', { dangerouslyUseHTMLString: true })).catch(() => {}) },
     analyze(row) {
-      if (row.status !== 'DONE') return this.runAnalysis(row, {})
+      if (row.status !== 'DONE') return this.openAnalysisTablePicker(row, 'FULL')
       // 已有历史草案：先选模式
       this.$confirm(
         '已有历史草案，可选择全量重扫或仅更新变化表（增量）。\n\n• 全量：重新扫描全部表结构，生成新版本\n• 增量：仅重新读取指定表，与上一版快照合并后生成新版本',
@@ -442,22 +470,48 @@ export default {
         { confirmButtonText: '全量分析', cancelButtonText: '增量更新', distinguishCancelAndClose: true, type: 'info' }
       ).then(() => {
         // 全量
-        this.runAnalysis(row, {})
+        this.openAnalysisTablePicker(row, 'FULL')
       }).catch(action => {
         if (action === 'cancel') {
-          // 增量：再弹表名输入
-          this.$prompt('填写发生变化的表名（逗号分隔，最多 20 张）', '增量更新 — 指定变化表', {
-            inputValue: '', inputPlaceholder: '例如：orders, order_item'
-          }).then(({ value }) => {
-            const names = Array.from(new Set(String(value || '').split(',').map(n => n.trim()).filter(Boolean)))
-            if (!names.length) return this.$modal.msgError('请至少填写一张表名')
-            if (names.length > 20) return this.$modal.msgError('单次增量更新最多选择 20 张表')
-            this.runAnalysis(row, { mode: 'INCREMENTAL', tables: names.join(',') })
-          }).catch(() => {})
+          this.openAnalysisTablePicker(row, 'INCREMENTAL')
         }
       })
     },
-    runAnalysis(row, request) { const message=request.mode==='INCREMENTAL'?'系统将只重新读取所列变化表的结构，与上一个版本的其他表快照合并后重新生成候选，并保存一个新版本。是否继续？':'系统将全量扫描当前任务范围并保存一个新版本，完成后可比较与上一版本的差异。是否继续？'; this.$modal.confirm(message).then(() => { this.startAnalysisProgress(row.task_id, row.task_name); analyzeTask(row.task_id, request).then(result => { if (result.data && result.data.async) { return } this.analysisResult=Object.assign({ isSavedProposal:true, taskId:row.task_id, taskName:row.task_name },result.data || {}); this.analysisConfig=this.analysisResult.proposalConfig || {}; this.analysisTab='objects'; this.analysisProgress.status='DONE'; this.analysisProgress.step=4; this.analysisProgress.message='分析完成，配置草案已保存；可进入知识问答修正分析结构'; this.analysisProgress.error=''; this.addAnalysisProgressLog('分析完成，配置草案 #' + (this.analysisResult.proposalId || '已保存')); this.stopAnalysisProgress(); this.load() }).catch(error => { this.analysisProgress.status='FAILED'; this.analysisProgress.message='分析失败'; this.analysisProgress.error=error && error.message ? error.message : '请检查数据源和模型服务状态'; this.addAnalysisProgressLog('分析失败：' + this.analysisProgress.error); this.stopAnalysisProgress(); this.load() }) }).catch(() => {}) },
+    openAnalysisTablePicker(row, mode) {
+      const source = this.datasourceOptions.find(item => String(item.datasource_id) === String(row.source_id)) || {}
+      this.tablePicker = { visible: true, loading: false, task: row, mode, keyword: '', pageNum: 1, pageSize: 50, rows: [], total: 0, selectedKeys: [], sampleLimit: Number(source.sample_limit || 0) }
+      this.loadAnalysisTables()
+    },
+    loadAnalysisTables() {
+      if (!this.tablePicker.task) return
+      this.tablePicker.loading = true
+      listDatasourceTables(this.tablePicker.task.source_id, { keyword: this.tablePicker.keyword, pageNum: this.tablePicker.pageNum, pageSize: this.tablePicker.pageSize }).then(({ data }) => {
+        this.tablePicker.rows = data.rows || []
+        this.tablePicker.total = Number(data.total || 0)
+      }).catch(error => this.$modal.msgError(error.message || '读取数据库表目录失败')).finally(() => { this.tablePicker.loading = false })
+    },
+    searchAnalysisTables() { this.tablePicker.pageNum = 1; this.loadAnalysisTables() },
+    tableKey(table) { return (table.schema ? table.schema + '.' : '') + (table.name || '').toLowerCase() },
+    toggleAnalysisTable(table, checked) {
+      const key = this.tableKey(table)
+      const selected = new Set(this.tablePicker.selectedKeys)
+      if (checked) selected.add(key)
+      else selected.delete(key)
+      this.tablePicker.selectedKeys = Array.from(selected)
+    },
+    startSelectedAnalysis() {
+      const row = this.tablePicker.task
+      const request = { mode: this.tablePicker.mode, tables: this.tablePicker.selectedKeys.join(','), sampleLimit: String(this.tablePicker.sampleLimit) }
+      this.tablePicker.visible = false
+      this.runAnalysis(row, request)
+    },
+    startAllTablesAnalysis() {
+      const row = this.tablePicker.task
+      const request = { mode: 'FULL', sampleLimit: String(this.tablePicker.sampleLimit) }
+      this.tablePicker.visible = false
+      this.runAnalysis(row, request)
+    },
+    runAnalysis(row, request) { const message=request.mode==='INCREMENTAL'?'只重新读取选中的变化表，与上一版本其他表快照合并后生成新版本。是否继续？':(request.tables ? `只分析选中的 ${request.tables.split(',').length} 张表，并保存一个新版本。是否继续？` : '将扫描整个数据源中所有可见的表和视图，搜索条件不会缩小此范围。是否继续？'); this.$modal.confirm(message).then(() => { this.startAnalysisProgress(row.task_id, row.task_name, row.status==='DONE'); analyzeTask(row.task_id, request).then(result => { if (result.data && result.data.async) { return } this.analysisResult=Object.assign({ isSavedProposal:true, taskId:row.task_id, taskName:row.task_name },result.data || {}); this.analysisConfig=this.analysisResult.proposalConfig || {}; this.analysisTab='objects'; this.analysisProgress.status='DONE'; this.analysisProgress.step=4; this.analysisProgress.message='分析完成，配置草案已保存；可进入知识问答修正分析结构'; this.analysisProgress.error=''; if (this.analysisProgress.isReanalysis) this.$modal.msgSuccess('新版本已经生成'); this.addAnalysisProgressLog('分析完成，配置草案 #' + (this.analysisResult.proposalId || '已保存')); this.stopAnalysisProgress(); this.load() }).catch(error => { this.analysisProgress.status='FAILED'; this.analysisProgress.message='分析失败'; this.analysisProgress.error=error && error.message ? error.message : '请检查数据源和模型服务状态'; this.addAnalysisProgressLog('分析失败：' + this.analysisProgress.error); this.stopAnalysisProgress(); this.load() }) }).catch(() => {}) },
     openTaskProposal(row) { this.$router.push({ path:'/engineering/proposal', query:{ taskId:String(row.task_id), taskName:row.task_name || '' } }) },
     openProposalVersions(row) { this.proposalVersionTaskId=row.task_id; this.proposalVersionPage.pageNum=1; this.proposalVersionsOpen=true; this.loadProposalVersions() },
     loadProposalVersions() { this.proposalVersionsLoading=true; listResource('proposals',Object.assign({},this.proposalVersionPage,{taskId:this.proposalVersionTaskId})).then(r=>{ this.proposalVersions=r.rows || []; this.proposalVersionTotal=r.total || 0 }).finally(()=>{this.proposalVersionsLoading=false}) },
@@ -472,12 +526,12 @@ export default {
       }).catch(() => {})
     },
     viewProposal(row) { getResource('proposals',row.proposal_id).then(({data}) => { let config; try { config=typeof data.config_json==='string' ? JSON.parse(data.config_json) : data.config_json } catch (e) { this.$modal.msgError('草案配置无法解析，请联系管理员检查数据'); return } if (!config || typeof config!=='object') { this.$modal.msgError('草案中没有可展示的结构化配置'); return } this.analysisResult={ proposalId:data.proposal_id, proposalName:data.proposal_name, status:data.status, taskId:data.task_id, taskName:data.task_name, proposalConfig:config, isSavedProposal:true, reviewComment:data.review_comment, reviewBy:data.review_by }; this.analysisConfig=config; this.analysisTab='objects'; this.proposalContext=null; this.analysisOpen=true; if (data.task_id) { getAnalysisContext(data.task_id, data.proposal_id).then(res => { this.proposalContext = res.data || null }).catch(() => {}) } }).catch(() => {}) },
-    startAnalysisProgress(taskId, taskName) {
+    startAnalysisProgress(taskId, taskName, isReanalysis) {
       this.stopAnalysisProgress()
       this.analysisResult = {}
       this.analysisConfig = {}
       this.analysisStartedAt = Date.now()
-      this.analysisProgress = { visible: true, status: 'RUNNING', step: 1, message: '1/4 正在加载分析任务进度…', elapsedSeconds: 0, error: '', logs: [], taskId, resumable: false, taskName: taskName || '' }
+      this.analysisProgress = { visible: true, status: 'RUNNING', step: 1, message: '1/4 正在加载分析任务进度…', elapsedSeconds: 0, error: '', logs: [], taskId, resumable: false, taskName: taskName || '', isReanalysis: !!isReanalysis }
       this.addAnalysisProgressLog(this.analysisProgress.message)
       const pollId = this.analysisPollId
       const poll = async () => {
@@ -498,6 +552,8 @@ export default {
             this.analysisProgress.status = 'DONE'
             this.analysisProgress.step = 4
             this.analysisProgress.message = '分析完成，配置草案已保存'
+            if (this.analysisProgress.isReanalysis) this.$modal.msgSuccess('新版本已经生成')
+            this.analysisProgress.isReanalysis = false
             try {
               const { data: result } = await getLatestAnalysisResult(taskId)
               if (pollId !== this.analysisPollId) return
@@ -511,6 +567,7 @@ export default {
               this.analysisProgress.message = '分析完成，结果读取失败，请打开配置草案查看'
             }
             this.stopAnalysisProgress()
+            if (this.$refs.analysisRunHistory) this.$refs.analysisRunHistory.load(false)
             this.load()
             return
           }
@@ -520,6 +577,7 @@ export default {
             this.analysisProgress.error = message || '请检查数据源和模型服务状态'
             this.addAnalysisProgressLog(this.analysisProgress.error)
             this.stopAnalysisProgress()
+            if (this.$refs.analysisRunHistory) this.$refs.analysisRunHistory.load(false)
             this.load()
             return
           }
@@ -562,6 +620,8 @@ export default {
       if (this.analysisProgressTimer) { this.analysisProgress.visible=true; return }
       this.startAnalysisProgress(row.task_id, row.task_name || '')
     },
+    closeAnalysisProgress() { this.analysisProgress.visible=false },
+    refreshAnalysisListOnClose() { if (this.analysisProgress.status === 'RUNNING') this.load() },
     openAnalysisResult() { this.analysisProgress.visible=false; this.analysisOpen=true },
     renderGraph() { const box=this.$refs.ontologyGraph; if (!box) return; if (this.graphChart) this.graphChart.dispose(); const objects=this.analysisConfig.objects || []; const relations=this.analysisConfig.relations || []; const nodes=objects.map((item,index) => ({ id:String(item.id), name:this.objectLabel(item) || ('对象 '+(index+1)), symbolSize:54, category:0 })); const links=relations.filter(item => item.sourceObjectId && item.targetObjectId).map(item => ({ source:String(item.sourceObjectId), target:String(item.targetObjectId), name:this.relationLabel(item) || item.cardinality || '关系' })); this.graphChart=echarts.init(box); this.graphChart.setOption({ animationDuration:400, tooltip:{ formatter:params => params.dataType==='edge' ? (params.data.name || '关系') : (params.data.name || '') }, series:[{ type:'graph', layout:'force', roam:true, draggable:true, data:nodes, links, force:{ repulsion:180, edgeLength:120 }, label:{ show:true, color:'#31302e', fontSize:12 }, lineStyle:{ color:'#a39e98', curveness:0.15 }, itemStyle:{ color:'#0075de', borderColor:'#fff', borderWidth:2 }, edgeLabel:{ show:true, formatter:params => params.data.name || '', color:'#615d59', fontSize:10 } }] }); },
     showProposalDiff() { this.diffLoading=true; proposalDiff(this.analysisResult.proposalId).then(({ data }) => { this.diffInfo=data || {}; this.diffOpen=true }).catch(() => {}).finally(() => { this.diffLoading=false }) },
@@ -605,6 +665,9 @@ export default {
 }
 </script>
 <style scoped>.notice{margin-bottom:16px}.asset-file-name{margin-left:12px;color:#53657d}.form-tip{margin-top:6px;color:#98a2b3;font-size:12px;line-height:18px}.form-error{margin-top:6px;color:#c45656;font-size:12px;line-height:18px}.asset-view-switch{margin-left:auto;margin-right:16px}.asset-graph-panel{min-height:420px;margin-bottom:16px;padding:14px 16px;border:1px solid #e3dfdb;border-radius:12px;background:#f6f5f4}.asset-graph-note{margin-bottom:10px;color:#7b746d;font-size:12px}.asset-relation-graph{height:460px;width:100%;border:1px solid #e8e2dc;border-radius:8px;background:#fff}.asset-preview-meta{display:flex;align-items:center;gap:12px;margin-bottom:12px;color:#24324b;font-size:16px}.wiki-result-title{margin:20px 0 8px;color:#24324b}.wiki-result-summary{margin:0 0 14px;color:#65748a}.wiki-result-content{max-height:520px;overflow:auto;margin:0;padding:18px;background:#f7f9fc;border:1px solid #e8edf4;border-radius:8px;color:#334155;white-space:pre-wrap;line-height:1.7;font:13px/1.7 Consolas,Monaco,monospace}.proposal-detail-head{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:14px 0 8px}.proposal-view-name{margin:0 0 5px;color:#31302e;font-size:18px;font-weight:700}.proposal-detail-meta{color:#8a817a;font-size:12px}.proposal-head-actions{display:flex;gap:8px}.analysis-progress-current{display:flex;align-items:center;gap:10px;margin-bottom:16px;color:#24324b}.analysis-progress-current i{font-size:20px;color:#2f88ff}.analysis-progress-current small{margin-left:auto;color:#8a96a8}.analysis-progress-steps{margin-bottom:18px}.analysis-progress-log{max-height:220px;overflow:auto;margin-bottom:16px;padding:12px 14px;border:1px solid #e8edf4;border-radius:8px;background:#f8fafc}.analysis-progress-log div{display:flex;gap:12px;padding:7px 0;color:#526174;font-size:13px}.analysis-progress-log time{min-width:70px;color:#9aa5b4}.analysis-counts{margin:16px 0}.count-card{border:1px solid #e8edf4;border-radius:8px;background:#f8fafc;padding:14px 16px}.count-card strong{display:block;color:#2f88ff;font-size:24px;line-height:28px}.count-card span{display:block;color:#7d8b9f;font-size:12px;margin-top:4px}.sub-table{margin-top:14px}.analysis-answer{margin-top:14px;padding:12px 14px;border-radius:8px;background:#f8fafc;color:#526174;white-space:pre-wrap;max-height:180px;overflow:auto}.analysis-answer strong{display:block;color:#24324b;margin-bottom:6px}.ontology-graph{height:480px;width:100%;border:1px solid rgba(0,0,0,.1);border-radius:12px;background:#f6f5f4}.diff-summary{display:flex;align-items:center;gap:10px;margin-bottom:14px;color:#615d59;font-size:12px}.diff-json{max-height:140px;overflow:auto;margin:0;color:#526174;font-size:11px;white-space:pre-wrap}.answer-editor-tip{margin:4px 0 0 92px;color:#8a817a;font-size:12px;line-height:1.6}
+.analysis-history { margin-top:16px; }
+.analysis-history h3 { margin:0 0 8px; font-size:14px; }
+.history-more { margin-top:8px; }
 
 </style>
 <style scoped>

@@ -38,11 +38,13 @@ public class AnalysisServicesIntegrationTest {
     private final ObjectMapper json = new ObjectMapper();
     private final QueueExecutor executor = new QueueExecutor();
     private final AtomicInteger scans = new AtomicInteger();
+    private Map<String,Object> lastScanOptions = Collections.emptyMap();
     private final AtomicInteger descriptions = new AtomicInteger();
     private boolean failNames;
     private boolean failAnswerSave;
     private boolean rejectExecution;
     private boolean cancelDuringNaming;
+    private boolean failModelCall;
 
     @Before
     public void setup() throws Exception {
@@ -55,8 +57,11 @@ public class AnalysisServicesIntegrationTest {
         jdbc.execute("create table ontology_datasource(datasource_id bigint, name varchar(100), db_type varchar(30), host varchar(50), port int, database_name varchar(50), schema_name varchar(50), jdbc_url varchar(100), username varchar(50), password_enc varchar(100), sample_limit int)");
         jdbc.execute("create table ontology_proposal(proposal_id bigint auto_increment primary key, proposal_name varchar(200), proposal_type varchar(100), task_id bigint, config_json varchar(1000000), status varchar(30), review_by varchar(64), review_time timestamp, review_comment varchar(100), create_by varchar(64), create_time timestamp, update_by varchar(64), update_time timestamp)");
         jdbc.execute("create table ontology_analysis_job(task_id bigint primary key, run_token varchar(64), status varchar(20), stage varchar(30), request_json clob, checkpoint_json clob, username varchar(64), message varchar(1000), lease_until bigint, model_calls int, proposal_id bigint, created_at timestamp, updated_at timestamp)");
+        jdbc.execute("create table ontology_analysis_run(run_id bigint auto_increment primary key, task_id bigint, run_token varchar(64) unique, run_kind varchar(10), source_id bigint, wiki_space_id bigint, selection_json clob, username varchar(64), started_at bigint, finished_at bigint, status varchar(20), stage varchar(30), model_calls int default 0, proposal_id bigint)");
+        jdbc.execute("create table ontology_analysis_model_call(call_id bigint auto_increment primary key, task_id bigint, run_token varchar(64), call_number int, stage varchar(30), started_at bigint, finished_at bigint, duration_ms bigint, status varchar(20), failure_type varchar(100), unique(run_token, call_number))");
+        jdbc.execute("create table ontology_analysis_stage_timing(timing_id bigint auto_increment primary key, task_id bigint, run_token varchar(64), stage varchar(40), started_at bigint, finished_at bigint, duration_ms bigint, status varchar(20), failure_type varchar(100))");
         jdbc.update("insert into analysis_task(task_id, task_name, source_id, wiki_space_id, scope, status) values (1, '订单分析', 2, 3, '订单业务', 'DRAFT')");
-        jdbc.update("insert into ontology_datasource(datasource_id, name, db_type, username, password_enc) values (2, '订单库', 'mysql', 'reader', 'secret-credential')");
+        jdbc.update("insert into ontology_datasource(datasource_id, name, db_type, username, password_enc, sample_limit) values (2, '订单库', 'mysql', 'reader', 'secret-credential', 4)");
         SqlSessionFactoryBean factory = new SqlSessionFactoryBean();
         factory.setDataSource(database);
         factory.setMapperLocations(new ClassPathResource("mapper/ontology/AnalysisJobMapper.xml"), new ClassPathResource("mapper/ontology/OntologyAnalysisMapper.xml"), new ClassPathResource("mapper/ontology/ProposalRevisionMapper.xml"));
@@ -65,7 +70,10 @@ public class AnalysisServicesIntegrationTest {
         wiki = new LlmWikiClient(new OntologyIntegrationProperties(), null, null, null, null, null, null) {
             @Override public boolean enabled() { return true; }
             @Override public String confirmedKnowledgeContext(Long taskId, Long spaceId, String question) { return "已确认订单业务"; }
-            @Override public String analysisCompletion(String prompt) { return "订单业务分析说明"; }
+            @Override public String analysisCompletion(String prompt) {
+                if (failModelCall) throw new IllegalStateException("模型调用失败");
+                return "订单业务分析说明";
+            }
             @Override public Map<String,Object> saveAnalysisAnswer(long taskId, String answer, boolean confirm, String username) {
                 if (failAnswerSave) throw new IllegalStateException("保存答案失败");
                 return Collections.emptyMap();
@@ -75,6 +83,7 @@ public class AnalysisServicesIntegrationTest {
         scanner = new DataSourceScanner(null) {
             @Override public Map<String,Object> scan(Map<String,Object> source, Map<String,Object> options) {
                 scans.incrementAndGet();
+                lastScanOptions = new LinkedHashMap<>(options);
                 return row("tableCount", 1, "tables", Collections.singletonList(row("name", "orders", "columns", Collections.singletonList(row("name", "id", "type", "BIGINT", "nullable", false)), "primaryKeys", Collections.singletonList("id"))));
             }
         };
@@ -130,6 +139,51 @@ public class AnalysisServicesIntegrationTest {
     }
 
     @Test
+    public void selectedTablesAreTheOnlyScannedObjectsAndDatasourceSampleLimitIsApplied() {
+        Map<String,String> request = new LinkedHashMap<>();
+        request.put("tables", "orders");
+        service.start(1, request, "alice");
+        executor.runNext();
+        assertEquals(Collections.singleton("orders"), lastScanOptions.get("tables"));
+        assertEquals(4, lastScanOptions.get("sampleLimit"));
+        assertEquals("DONE", service.status(1).get("status"));
+        List<Map<String,Object>> history = (List<Map<String,Object>>) service.history(1, null, 20).get("rows");
+        assertTrue(String.valueOf(history.get(0).get("selectionJson")).contains("orders"));
+    }
+
+    @Test
+    public void modelCallFailuresAndLatencyArePersistedWithoutPromptContent() {
+        failModelCall = true;
+        service.start(1, Collections.emptyMap(), "alice");
+        executor.runNext();
+        failModelCall = false;
+        service.resume(1, "alice");
+        executor.runNext();
+        List<Map<String,Object>> runs = (List<Map<String,Object>>) service.history(1, null, 20).get("rows");
+        List<Map<String,Object>> failedCalls = service.modelCalls(1, ((Number) runs.get(1).get("runId")).longValue());
+        List<Map<String,Object>> successfulCalls = service.modelCalls(1, ((Number) runs.get(0).get("runId")).longValue());
+        assertEquals("FAILED", failedCalls.get(0).get("status"));
+        assertEquals("IllegalStateException", failedCalls.get(0).get("failureType"));
+        assertEquals("SUCCEEDED", successfulCalls.get(0).get("status"));
+        assertTrue(((Number) successfulCalls.get(0).get("durationMillis")).longValue() >= 0);
+        assertFalse(failedCalls.get(0).containsKey("prompt"));
+        List<Map<String,Object>> stageTimings = service.stageTimings(1, ((Number) runs.get(1).get("runId")).longValue());
+        assertEquals(Arrays.asList("SCAN", "WIKI_DOCUMENTS", "BUSINESS_RULES", "GENERATION", "MODEL_ENRICHMENT"),
+                stageTimings.stream().map(row -> row.get("stage")).collect(java.util.stream.Collectors.toList()));
+        assertEquals("FAILED", stageTimings.get(4).get("status"));
+        assertEquals("IllegalStateException", stageTimings.get(4).get("failureType"));
+        long resumedRunId = ((Number) runs.get(0).get("runId")).longValue();
+        List<Map<String,Object>> resumed = service.stageTimings(1, resumedRunId);
+        assertEquals(Arrays.asList("MODEL_ENRICHMENT", "NAME_COMPLETION"),
+                resumed.stream().map(row -> row.get("stage")).collect(java.util.stream.Collectors.toList()));
+        for (Map<String,Object> timing : resumed) {
+            assertEquals("SUCCEEDED", timing.get("status"));
+            assertTrue(((Number) timing.get("durationMillis")).longValue() >= 0);
+        }
+        assertTrue(service.stageTimings(2, resumedRunId).isEmpty());
+    }
+
+    @Test
     public void failedNamingResumesWithoutRepeatingScanOrDescription() {
         failNames = true;
         service.start(1, Collections.emptyMap(), "alice");
@@ -142,6 +196,28 @@ public class AnalysisServicesIntegrationTest {
         assertEquals("DONE", service.status(1).get("status"));
         assertEquals(1, scans.get());
         assertEquals(1, descriptions.get());
+        Map<String, Object> metrics = service.runtimeMetrics();
+        assertEquals(2L, ((Map<?,?>) metrics.get("queueWait")).get("count"));
+        for (String stage : Arrays.asList("scan", "generation", "wikiDocuments", "businessRules")) {
+            assertEquals(1L, ((Map<?,?>) metrics.get(stage)).get("count"));
+        }
+        assertEquals(2L, ((Map<?,?>) metrics.get("model")).get("count"));
+        Map<String,Object> history = service.history(1, null, 20);
+        List<Map<String,Object>> runs = (List<Map<String,Object>>) history.get("rows");
+        assertEquals(2, runs.size());
+        assertEquals("RESUME", runs.get(0).get("runKind"));
+        assertEquals("DONE", runs.get(0).get("status"));
+        assertEquals(1L, ((Number) runs.get(0).get("proposalId")).longValue());
+        assertEquals("START", runs.get(1).get("runKind"));
+        assertEquals("FAILED", runs.get(1).get("status"));
+        assertEquals(3L, ((Number) runs.get(0).get("wikiSpaceId")).longValue());
+        assertFalse(runs.get(0).containsKey("runToken"));
+        Map<String,Object> firstPage = service.history(1, null, 1);
+        assertEquals(1, ((List<?>) firstPage.get("rows")).size());
+        assertNotNull(firstPage.get("nextCursor"));
+        Map<String,Object> secondPage = service.history(1, ((Number) firstPage.get("nextCursor")).longValue(), 1);
+        assertEquals(1, ((List<?>) secondPage.get("rows")).size());
+        assertNull(secondPage.get("nextCursor"));
     }
 
     @Test
@@ -169,6 +245,9 @@ public class AnalysisServicesIntegrationTest {
         assertEquals("RUNNING", service.status(1).get("status"));
         executor.runNext();
         assertEquals(1, jdbc.queryForObject("select count(*) from ontology_proposal", Integer.class).intValue());
+        List<Map<String,Object>> history = (List<Map<String,Object>>) service.history(1, null, 20).get("rows");
+        assertEquals("DONE", history.get(0).get("status"));
+        assertEquals("INTERRUPTED", history.get(1).get("status"));
     }
 
     @Test
@@ -181,6 +260,7 @@ public class AnalysisServicesIntegrationTest {
         rejectExecution = true;
         try { service.start(1, Collections.emptyMap(), "alice"); fail(); } catch (IllegalStateException expected) { }
         assertEquals("FAILED", jdbc.queryForObject("select status from analysis_task", String.class));
+        assertEquals(1L, service.runtimeMetrics().get("dispatchFailures"));
     }
 
     @Test

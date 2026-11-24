@@ -174,7 +174,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     </select>
 
     <select id="selectEnabledSettingByScene" resultType="java.util.LinkedHashMap">
-        select api_base_url, api_key_enc, model
+        select id, api_base_url, api_key_enc, model, provider_type, usage_scene
         from ontology_llm_settings
         where enabled = #{enabled} and usage_scene = #{scene}
         order by id desc

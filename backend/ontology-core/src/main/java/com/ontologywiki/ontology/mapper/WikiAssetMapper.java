@@ -305,6 +305,12 @@ public interface WikiAssetMapper {
 
     // ==================== 问答检索与 URL 来源 ====================
 
+    List<Map<String, Object>> selectEvidenceCandidates(@Param("terms") List<String> terms,
+                                                       @Param("assetScope") boolean assetScope,
+                                                       @Param("scopeId") Long scopeId,
+                                                       @Param("spaceId") Long spaceId,
+                                                       @Param("limit") int limit);
+
     /**
      * 读取单个资产的正文，用于问答时生成证据片段。
      *

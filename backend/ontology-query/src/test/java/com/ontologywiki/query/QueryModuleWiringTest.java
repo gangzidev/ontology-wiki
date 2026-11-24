@@ -194,6 +194,36 @@ public class QueryModuleWiringTest {
         assertEquals(Arrays.asList("user_id", "user_name"), empty.get("columns"));
     }
 
+    @Test
+    public void taskIdProjectionWinsOverCountAliasAndRecommendedQuestionsExecute() throws Exception {
+        Map<String,Object> config = config();
+        config.put("objects", Arrays.asList(row("id", "tasks", "name", "分析任务", "table", "analysis_task"),
+                rows(config, "objects").get(0)));
+        config.put("properties", Arrays.asList(row("id", "taskKey", "name", "分析任务ID", "column", "task_id", "objectId", "tasks"),
+                rows(config, "properties").get(0), rows(config, "properties").get(1)));
+        Map<String,Object> semantics = (Map<String,Object>) config.get("semanticCatalog");
+        rows(semantics, "metrics").get(0).put("synonyms", Collections.singletonList("分析任务ID"));
+        jdbc.update("update ontology_proposal set config_json = ? where proposal_id = 7", new ObjectMapper().writeValueAsString(config));
+        String question = "查看analysis_task的分析任务ID";
+        for (String lookup : Arrays.asList(question, "查询分析任务的task_id")) {
+            Map<String,Object> answer = queries.ask(7, row("question", lookup), "alice");
+            assertEquals(String.valueOf(answer), "result", answer.get("type"));
+            assertEquals(Collections.singletonList("task_id"), answer.get("columns"));
+            assertEquals(3L, ((Number) rows(answer, "rows").get(0).get("task_id")).longValue());
+        }
+        List<String> examples = (List<String>) queries.catalog(7).get("exampleQuestions");
+        assertTrue(examples.contains(question));
+        assertTrue(examples.contains("按地区统计订单数量"));
+        for (String example : examples) assertEquals(example, "result", queries.ask(7, row("question", example), "alice").get("type"));
+        assertEquals("clarification", queries.ask(7, row("question", "查看missing_table的task_id"), "alice").get("type"));
+        jdbc.execute("delete from orders");
+        Map<String,Object> empty = queries.ask(7, row("question", "查看orders的订单编号"), "alice");
+        assertEquals("result", empty.get("type"));
+        assertTrue(rows(empty, "rows").isEmpty());
+        jdbc.update("update ontology_proposal set status = 'DRAFT' where proposal_id = 7");
+        assertEquals(Collections.emptyList(), queries.catalog(7).get("exampleQuestions"));
+    }
+
     private Map<String, Object> config() {
         return row("objects", Collections.singletonList(row("id", "orders", "name", "订单", "table", "orders")),
                 "properties", Arrays.asList(row("id", "orderId", "name", "订单编号", "column", "order_id", "objectId", "orders", "dataType", "BIGINT"),

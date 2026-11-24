@@ -91,16 +91,24 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     <!-- ==================== 引用 ==================== -->
 
     <insert id="insertCitation">
-        insert ignore into wiki_chat_citation (message_id, asset_id)
-        values (#{messageId}, #{assetId})
+        insert into wiki_chat_citation (message_id, asset_id, evidence_json)
+        values (#{messageId}, #{assetId}, #{evidenceJson})
     </insert>
 
     <!-- 批量取引用资产，避免逐条查询 -->
     <select id="selectCitations" resultType="java.util.LinkedHashMap">
-        select c.message_id, c.asset_id, a.asset_name, a.asset_type
+        select c.message_id, c.asset_id, c.evidence_json, a.asset_name, a.asset_type
         from wiki_chat_citation c
         join wiki_asset a on a.asset_id = c.asset_id
-        where c.message_id in
+        join wiki_chat_message m on m.message_id = c.message_id
+        join wiki_chat_session s on s.session_id = m.session_id and s.created_by = m.created_by
+        where a.status = '0' and (a.space_id is null or exists
+              (select 1 from wiki_space w where w.space_id = a.space_id and w.status = '0'))
+          and (s.scope_type = 'ALL' or
+               ((s.space_id = a.space_id or (s.space_id is null and a.space_id is null)) and
+                (s.scope_type = 'SPACE' or (s.scope_type = 'ASSET' and
+                 (a.asset_id = s.scope_id or a.tags = concat('SOURCE:', s.scope_id))))))
+          and c.message_id in
         <foreach collection="messageIds" item="id" open="(" separator="," close=")">
             #{id}
         </foreach>

@@ -138,10 +138,12 @@ public class QuerySqlCompilerTest {
                 "dimensions", Collections.singletonList(row("id", "role", "name", "角色", "propertyId", "roleName"))));
         Map<String, Object> plan = row("metrics", Collections.singletonList(row("id", "user-count")), "dimensions", Collections.singletonList(row("id", "role")));
         new QueryPlanValidator().validate(plan, config);
-        String sql = new QuerySqlCompiler().compile(plan, config, "mysql").getSql().toLowerCase(Locale.ROOT);
+        QuerySqlCompiler.Result result = new QuerySqlCompiler().compile(plan, config, "mysql");
+        String sql = result.getSql().toLowerCase(Locale.ROOT);
         Assert.assertTrue(sql.contains("join `user_role`"));
         Assert.assertTrue(sql.contains("t0.`id` = t2.`user_id`"));
         Assert.assertTrue(sql.contains("t2.`role_id` = t1.`id`"));
+        Assert.assertTrue(result.getObjectIds().contains("userRole"));
     }
 
     @Test

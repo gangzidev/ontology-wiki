@@ -1,6 +1,7 @@
 package com.ontologywiki.ontology.service.analysis;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.ontologywiki.ontology.mapper.AnalysisJobMapper;
 import com.ontologywiki.ontology.mapper.OntologyAnalysisMapper;
 import com.ontologywiki.ontology.service.LlmWikiClient;
@@ -29,6 +30,42 @@ public class AnalysisJobStore {
         catch (org.springframework.jdbc.BadSqlGrammarException failure) { throw new IllegalStateException("分析任务存储未就绪，请先执行 backend/sql/migrate-analysis-job.sql", failure); }
     }
 
+    public Map<String,Object> history(long taskId, Long before, int limit) {
+        if (limit < 1 || limit > 100 || (before != null && before < 1)) throw new IllegalArgumentException("执行记录分页参数无效");
+        List<Map<String,Object>> rows;
+        try { rows = mapper.selectRuns(taskId, before, limit + 1, System.currentTimeMillis()); }
+        catch (org.springframework.jdbc.BadSqlGrammarException failure) { throw runMigrationRequired(failure); }
+        boolean more = rows.size() > limit;
+        Map<String,Object> page = new LinkedHashMap<>();
+        page.put("rows", more ? rows.subList(0, limit) : rows);
+        page.put("nextCursor", more ? rows.get(limit - 1).get("runId") : null);
+        return page;
+    }
+
+    public List<Map<String,Object>> modelCalls(long taskId, long runId) {
+        if (runId < 1) throw new IllegalArgumentException("执行编号无效");
+        try { return mapper.selectModelCalls(taskId, runId); }
+        catch (org.springframework.jdbc.BadSqlGrammarException failure) { throw runMigrationRequired(failure); }
+    }
+
+    public List<Map<String,Object>> stageTimings(long taskId, long runId) {
+        if (runId < 1) throw new IllegalArgumentException("执行编号无效");
+        try { return mapper.selectStageTimings(taskId, runId); }
+        catch (org.springframework.jdbc.BadSqlGrammarException failure) { throw runMigrationRequired(failure); }
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public void recordModelCall(Map<String,Object> call) {
+        try { mapper.insertModelCall(call); }
+        catch (org.springframework.jdbc.BadSqlGrammarException failure) { throw runMigrationRequired(failure); }
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public void recordStageTiming(Map<String,Object> timing) {
+        try { mapper.insertStageTiming(timing); }
+        catch (org.springframework.jdbc.BadSqlGrammarException failure) { throw runMigrationRequired(failure); }
+    }
+
     @Transactional(rollbackFor = Exception.class)
     public Map<String,Object> claim(long taskId, Map<String,String> request, String username, boolean resume) {
         Map<String,Object> task = mapper.lockTask(taskId);
@@ -45,8 +82,25 @@ public class AnalysisJobStore {
         job.put("checkpointJson", resume ? prior.get("checkpointJson") : "{}");
         job.put("username", username);
         job.put("message", resume ? "1/4 正在恢复已保存的分析检查点…" : "1/4 正在连接数据源，读取表结构和字段…");
-        job.put("leaseUntil", System.currentTimeMillis() + LEASE_MILLIS);
+        long startedAt = System.currentTimeMillis();
+        job.put("leaseUntil", startedAt + LEASE_MILLIS);
+        job.put("startedAt", startedAt);
+        job.put("runKind", resume ? "RESUME" : "START");
+        job.put("sourceId", task.get("sourceId"));
+        job.put("wikiSpaceId", task.get("wikiSpaceId"));
+        Map<String,Object> selection = new LinkedHashMap<>();
+        Map<String,String> requestedScope = resume ? parseRequest(prior.get("requestJson")) : request;
+        selection.put("mode", requestedScope.get("mode"));
+        selection.put("tables", AnalysisInput.requestedTableNames(requestedScope.get("tables")));
+        selection.put("sampleLimit", requestedScope.get("sampleLimit"));
+        job.put("selectionJson", write(selection));
+        if (prior != null && "RUNNING".equals(prior.get("status"))) {
+            prior.put("status", "INTERRUPTED");
+            prior.put("finishedAt", prior.get("leaseUntil"));
+            mapper.finishRun(prior);
+        }
         if (prior == null) mapper.insertJob(job); else mapper.claimJob(job);
+        mapper.insertRun(job);
         mapper.updateTask(taskId, "RUNNING", String.valueOf(job.get("message")), username);
         return mapper.selectJob(taskId);
     }
@@ -64,7 +118,7 @@ public class AnalysisJobStore {
         job.put("status", "CANCELLED");
         job.put("message", "分析已取消，可恢复检查点后继续。");
         job.put("proposalId", null);
-        mapper.finish(job);
+        finish(job);
         mapper.updateTask(taskId, "CANCELLED", String.valueOf(job.get("message")), username);
     }
 
@@ -96,7 +150,8 @@ public class AnalysisJobStore {
         job.put("status", status);
         job.put("message", clip(message));
         job.put("proposalId", null);
-        if (mapper.finish(job) == 1) mapper.updateTask(taskId, status, clip(message), username);
+        finish(job);
+        mapper.updateTask(taskId, status, clip(message), username);
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -118,9 +173,15 @@ public class AnalysisJobStore {
         job.put("status", "DONE");
         job.put("message", "4/4 分析完成，配置草案已保存");
         job.put("proposalId", proposalId);
-        mapper.finish(job);
+        finish(job);
         mapper.updateTask(taskId, "DONE", answer.length() > 60000 ? answer.substring(0, 60000) : answer, username);
         return proposalId;
+    }
+
+    private void finish(Map<String,Object> job) {
+        if (mapper.finish(job) != 1) throw new CancellationException("分析已取消或被新的执行接管");
+        job.put("finishedAt", System.currentTimeMillis());
+        mapper.finishRun(job);
     }
 
     private boolean active(Map<String,Object> job, String token) { return job != null && "RUNNING".equals(job.get("status")) && Objects.equals(token, job.get("runToken")); }
@@ -129,5 +190,14 @@ public class AnalysisJobStore {
     private String write(Object value) {
         try { return json.writeValueAsString(value); }
         catch (Exception failure) { throw new IllegalArgumentException("无法保存分析检查点", failure); }
+    }
+
+    private Map<String,String> parseRequest(Object value) {
+        try { return json.readValue(String.valueOf(value), new TypeReference<Map<String,String>>() {}); }
+        catch (Exception failure) { throw new IllegalArgumentException("无法读取分析范围记录", failure); }
+    }
+
+    private IllegalStateException runMigrationRequired(Exception failure) {
+        return new IllegalStateException("分析执行历史存储未就绪，请执行 backend/sql/migrate-analysis-run.sql", failure);
     }
 }

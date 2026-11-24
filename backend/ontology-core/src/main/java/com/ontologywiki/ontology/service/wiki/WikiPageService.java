@@ -1,5 +1,8 @@
 package com.ontologywiki.ontology.service.wiki;
 
+import com.ontologywiki.ontology.repository.RowIds;
+import cn.hutool.core.collection.CollUtil;
+
 import com.ontologywiki.ontology.domain.WikiAssetStatus;
 import com.ontologywiki.ontology.domain.WikiAssetType;
 import com.ontologywiki.ontology.mapper.WikiAssetMapper;
@@ -29,10 +32,15 @@ public class WikiPageService {
 
     private final WikiAssetMapper assetMapper;
     private final WikiIndexService indexService;
+    private final WikiRelationService relationService;
+    private final WikiChunkIndexService chunkIndexService;
 
-    public WikiPageService(WikiAssetMapper assetMapper, WikiIndexService indexService) {
+    public WikiPageService(WikiAssetMapper assetMapper, WikiIndexService indexService,
+                           WikiRelationService relationService, WikiChunkIndexService chunkIndexService) {
         this.assetMapper = assetMapper;
         this.indexService = indexService;
+        this.relationService = relationService;
+        this.chunkIndexService = chunkIndexService;
     }
 
     /**
@@ -58,7 +66,7 @@ public class WikiPageService {
         if (rows.isEmpty()) {
             throw new IllegalArgumentException("Wiki 页面不存在: " + slug);
         }
-        return rows.get(0);
+        return CollUtil.getFirst(rows);
     }
 
     /**
@@ -83,6 +91,9 @@ public class WikiPageService {
         assetMapper.insertPage(spaceId, slug, WikiAssetType.WIKI_PAGE.getCode(),
                 MANUAL_PAGE_DESCRIPTION, clipContent(content), WikiAssetStatus.ACTIVE.getCode());
 
+        long assetId = RowIds.required(getPage(slug), "id");
+        relationService.refreshPage(assetId);
+        chunkIndexService.refreshAsset(assetId);
         indexService.refreshIndex();
         return getPage(slug);
     }
@@ -102,6 +113,9 @@ public class WikiPageService {
         if (updated == 0) {
             throw new IllegalArgumentException("Wiki 页面不存在: " + slug);
         }
+        long assetId = RowIds.required(getPage(slug), "id");
+        relationService.refreshPage(assetId);
+        chunkIndexService.refreshAsset(assetId);
         indexService.refreshIndex();
         return getPage(slug);
     }
@@ -118,6 +132,13 @@ public class WikiPageService {
         int deleted = assetMapper.softDeletePage(WikiAssetStatus.INACTIVE.getCode(),
                 WikiAssetType.WIKI_PAGE.getCode(), slug);
         if (deleted > 0) {
+            List<Map<String, Object>> page = assetMapper.selectExistingPage(
+                    WikiAssetType.WIKI_PAGE.getCode(), slug, WikiAssetStatus.INACTIVE.getCode());
+            if (!page.isEmpty()) {
+                long assetId = RowIds.first(page, "asset_id");
+                relationService.refreshPage(assetId);
+                chunkIndexService.refreshAsset(assetId);
+            }
             indexService.refreshIndex();
         }
         return deleted > 0;

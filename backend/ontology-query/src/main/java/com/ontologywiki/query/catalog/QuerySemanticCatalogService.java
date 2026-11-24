@@ -29,6 +29,7 @@ public class QuerySemanticCatalogService {
             result.put(category, entries);
         }
         Map<String, List<Map<String, Object>>> fieldsByObject = new LinkedHashMap<>();
+        Map<String, Map<String, Object>> objectsById = new LinkedHashMap<>();
         for (Map<String, Object> property : properties.values()) {
             if (text(property.get("column")).isEmpty()) continue;
             Map<String, Object> field = new LinkedHashMap<>();
@@ -38,11 +39,13 @@ public class QuerySemanticCatalogService {
         List<Map<String, Object>> objects = new ArrayList<>();
         for (Map<String, Object> object : rows(config.get("objects"))) {
             if (text(object.get("table")).isEmpty()) continue;
+            objectsById.put(text(object.get("id")), object);
             Map<String, Object> entry = new LinkedHashMap<>();
             for (String key : Arrays.asList("id", "name", "table", "schema", "synonyms")) if (object.containsKey(key)) entry.put(key, object.get(key));
             List<Map<String, Object>> fields = fieldsByObject.getOrDefault(text(object.get("id")), Collections.emptyList());
             if (fields.isEmpty()) continue;
             entry.put("fields", fields);
+            entry.put("fieldCount", fields.size());
             objects.add(entry);
         }
         result.put("objects", objects);
@@ -52,18 +55,40 @@ public class QuerySemanticCatalogService {
         for (Map<String, Object> relation : relations) {
             if ("m2mReification".equals(String.valueOf(relation.get("inferenceMethod")))) continue;
             Map<String, Object> entry = new LinkedHashMap<>();
-            for (String key : Arrays.asList("sourceObjectId", "targetObjectId", "viaObjectId", "inferenceMethod")) {
+            for (String key : Arrays.asList("id", "name", "sourceObjectId", "targetObjectId", "sourceColumn", "targetColumn",
+                    "sourceKeyColumn", "targetKeyColumn", "viaObjectId", "viaTable", "viaSourceColumn", "viaTargetColumn",
+                    "cardinality", "inferenceMethod", "confidence", "evidence", "reviewRequired")) {
                 if (relation.containsKey(key)) entry.put(key, relation.get(key));
             }
+            addObjectLabel(entry, "source", objectsById.get(text(relation.get("sourceObjectId"))));
+            addObjectLabel(entry, "target", objectsById.get(text(relation.get("targetObjectId"))));
+            addObjectLabel(entry, "via", objectsById.get(text(relation.get("viaObjectId"))));
             relationEntries.add(entry);
         }
         result.put("relations", relationEntries);
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("tableCount", objects.size());
+        summary.put("fieldCount", objects.stream().mapToInt(object -> ((Number) object.get("fieldCount")).intValue()).sum());
+        summary.put("relationCount", relationEntries.size());
+        result.put("structureSummary", summary);
+        List<Map<String, Object>> profiles = rows(config.get("dataProfiles"));
+        if (profiles.isEmpty()) profiles = rows(map(config.get("targetConfig")).get("dataProfiles"));
+        result.put("dataProfiles", profiles);
         return result;
+    }
+
+    private void addObjectLabel(Map<String, Object> relation, String prefix, Map<String, Object> object) {
+        if (object == null) return;
+        relation.put(prefix + "Name", object.get("name"));
+        relation.put(prefix + "Table", object.get("table"));
+        relation.put(prefix + "Schema", object.get("schema"));
     }
 
     public Resolution resolve(Map<String, Object> config, String question) {
         String normalizedQuestion = normalize(question);
         if (normalizedQuestion.isEmpty()) return Resolution.clarification("请输入要查询的问题");
+        Resolution projection = resolveCatalogField(config, question);
+        if (projection != null) return projection;
         Map<String, Object> catalog = map(config == null ? null : config.get("semanticCatalog"));
         boolean hasCatalog = !catalog.isEmpty();
         Map<String, Object> semantics = SemanticCatalog.from(config);
@@ -99,6 +124,53 @@ public class QuerySemanticCatalogService {
         return new Resolution(Collections.singletonList(metricMatches.get(0).id),
                 dimension == null ? Collections.<String>emptyList() : Collections.singletonList(dimensionMatches.get(0).id), defaults, evidence, null);
     }
+
+    // Recognize complete catalogue requests before metric synonyms (a COUNT metric often aliases its ID column).
+    private Resolution resolveCatalogField(Map<String, Object> config, String question) {
+        if (config == null) return null;
+        java.util.regex.Matcher request = FIELD_REQUEST.matcher(question.trim());
+        if (!request.matches()) return null;
+        String table = request.group(1).trim();
+        String field = request.group(2).trim();
+        List<String> objects = new ArrayList<>();
+        for (Map<String,Object> object : rows(config.get("objects"))) {
+            if (objectAliases(object).stream().anyMatch(table::equalsIgnoreCase)) objects.add(text(object.get("id")));
+        }
+        boolean identifierField = field.matches("(?iu)(?:[a-z_][a-z0-9_]*|[\\p{L}0-9_]*(?:ID|编号))");
+        if (objects.isEmpty()) {
+            if ((identifierField || table.contains(".")) && table.matches("(?i)[a-z_][a-z0-9_.]*"))
+                return Resolution.clarification("当前草案的数据目录没有表 " + table + "，请确认所选草案和表名");
+            return null;
+        }
+        if (objects.size() > 1) return Resolution.clarification("表名匹配多个对象，请指定 Schema 和表名");
+        String objectId = objects.get(0);
+        if (Arrays.asList("数据", "明细", "全部数据", "记录列表").contains(field)) return Resolution.detail(objectId);
+        List<String> fields = new ArrayList<>();
+        Set<String> columns = new LinkedHashSet<>();
+        for (Map<String,Object> property : rows(config.get("properties"))) {
+            if (!objectId.equals(text(property.get("objectId"))) || text(property.get("column")).isEmpty()) continue;
+            if (field.equalsIgnoreCase(text(property.get("column")))) columns.add(text(property.get("id")));
+            for (String key : Arrays.asList("name", "column", "label", "technicalName")) {
+                if (field.equalsIgnoreCase(text(property.get(key)))) {
+                    fields.add(text(property.get("id")));
+                    break;
+                }
+            }
+        }
+        if (!columns.isEmpty()) fields = new ArrayList<>(columns);
+        if (fields.size() > 1) return Resolution.clarification("多个字段使用了这个名称，请指定物理列名");
+        if (fields.isEmpty()) {
+            if (identifierField) return Resolution.clarification(table + " 的目录没有匹配字段“" + field + "”，请确认列名");
+            return null;
+        }
+        Resolution result = Resolution.detail(objectId);
+        result.fieldId = fields.get(0);
+        result.evidence.put("fieldId", result.fieldId);
+        return result;
+    }
+
+    private static final java.util.regex.Pattern FIELD_REQUEST = java.util.regex.Pattern.compile(
+            "(?:请|我想)?(?:查看|查询|展示|列出|显示|看看)\\s*(.+?)的\\s*(.+?)[。？?]?");
 
     private Resolution resolveDetail(Map<String, Object> config, String question, boolean matchedMetric) {
         String normalized = normalize(question);
@@ -283,6 +355,7 @@ public class QuerySemanticCatalogService {
         private final Map<String, Object> evidence;
         private final String clarification;
         private final String detailObjectId;
+        private String fieldId;
         private boolean unmatched;
         private Resolution(List<String> metricIds, List<String> dimensionIds, List<Map<String, Object>> defaultFilters, Map<String, Object> evidence, String clarification) { this(metricIds, dimensionIds, defaultFilters, evidence, clarification, ""); }
         private Resolution(List<String> metricIds, List<String> dimensionIds, List<Map<String, Object>> defaultFilters, Map<String, Object> evidence, String clarification, String detailObjectId) { this.metricIds = metricIds; this.dimensionIds = dimensionIds; this.defaultFilters = defaultFilters; this.evidence = evidence; this.clarification = clarification; this.detailObjectId = detailObjectId; }
@@ -293,6 +366,7 @@ public class QuerySemanticCatalogService {
         public boolean needsClarification() { return clarification != null; }
         public boolean isDetailQuery() { return !detailObjectId.isEmpty(); }
         public String getDetailObjectId() { return detailObjectId; }
+        public String getFieldId() { return fieldId; }
         public String getClarification() { return clarification; }
         public List<String> getMetricIds() { return metricIds; }
         public List<String> getDimensionIds() { return dimensionIds; }

@@ -63,7 +63,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     </select>
 
     <select id="selectById" resultType="java.util.LinkedHashMap">
-        select api_base_url, api_key_enc, model from ontology_llm_settings where id = #{id}
+        select id, api_base_url, api_key_enc, model, provider_type, usage_scene, enabled from ontology_llm_settings where id = #{id}
     </select>
 
     <insert id="insertConfig" useGeneratedKeys="true" keyProperty="generatedId" keyColumn="id">

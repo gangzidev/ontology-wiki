@@ -1,5 +1,7 @@
 package com.ontologywiki.ontology.service.wiki;
 
+import com.ontologywiki.ontology.repository.RowIds;
+
 import com.ontologywiki.ontology.domain.WikiAssetStatus;
 import com.ontologywiki.ontology.domain.WikiAssetType;
 import com.ontologywiki.ontology.mapper.WikiAssetMapper;
@@ -77,7 +79,7 @@ public class WikiIndexService {
             assetMapper.insertSystemIndex(WikiAssetType.WIKI_PAGE.getCode(), indexContent,
                     SYSTEM_INDEX_TAG, WikiAssetStatus.ACTIVE.getCode());
         } else {
-            Long indexAssetId = ((Number) existingIndex.get(0).get("asset_id")).longValue();
+            Long indexAssetId = RowIds.first(existingIndex, "asset_id");
             assetMapper.updateSystemIndexContent(indexContent, indexAssetId);
         }
     }

@@ -77,7 +77,7 @@
 
         <div v-if="testResults[cfg.id]" class="test-result" :class="testResults[cfg.id].connected ? 'ok' : 'fail'">
           <i :class="testResults[cfg.id].connected ? 'el-icon-success' : 'el-icon-error'" />
-          <span v-if="testResults[cfg.id].connected">连接成功，模型：{{ testResults[cfg.id].model || '—' }}</span>
+          <span v-if="testResults[cfg.id].connected">completion 成功 · {{ providerLabel(testResults[cfg.id].providerType || cfg.provider_type) }} · {{ testResults[cfg.id].model || '—' }} · {{ testResults[cfg.id].configSource === 'ALL_FALLBACK' ? '使用 ALL 回退配置' : sceneLabel(testResults[cfg.id].usageScene || cfg.usage_scene) }}</span>
           <span v-else>连接失败：{{ testResults[cfg.id].message || '请检查网络和地址' }}</span>
         </div>
 
@@ -123,9 +123,9 @@
             <el-col :span="12">
               <el-form-item label="接入类型">
                 <el-select v-model="form.providerType" style="width:100%" @change="onProviderChange">
-                  <el-option value="OPENAI_COMPAT" label="API Key 模式" />
-                  <el-option value="OLLAMA" label="Ollama 本地模式" />
-                  <el-option value="LOCAL_COMPAT" label="本地 OpenAI 兼容" />
+                  <el-option value="OPENAI_COMPAT" label="OpenAI 兼容协议" />
+                  <el-option value="OLLAMA" label="Ollama 原生协议" />
+                  <el-option value="LOCAL_COMPAT" label="本地 OpenAI 兼容协议" />
                 </el-select>
               </el-form-item>
             </el-col>
@@ -158,7 +158,7 @@
           </el-checkbox>
           <div v-if="draftTestResult" class="draft-test-result" :class="draftTestResult.connected ? 'ok' : 'fail'">
             <i :class="draftTestResult.connected ? 'el-icon-success' : 'el-icon-error'" />
-            <span v-if="draftTestResult.connected">连接成功{{ draftTestResult.model ? '，模型：' + draftTestResult.model : '' }}</span>
+            <span v-if="draftTestResult.connected">completion 成功 · {{ providerLabel(draftTestResult.providerType || form.providerType) }}{{ draftTestResult.model ? ' · ' + draftTestResult.model : '' }}{{ draftTestResult.usageScene ? ' · ' + sceneLabel(draftTestResult.usageScene) : '' }}</span>
             <span v-else>连接失败：{{ draftTestResult.message || '请检查网络和接口地址' }}</span>
           </div>
         </div>
@@ -174,7 +174,7 @@
 
       <div slot="footer" class="dialog-foot">
         <el-button class="model-btn-ghost" icon="el-icon-connection"
-                   :loading="testingDraft" @click="testDraft">测试连通性</el-button>
+                   :loading="testingDraft" @click="testDraft">测试模型生成</el-button>
         <div class="dialog-foot-right">
           <el-button class="model-btn-ghost" @click="dialogOpen = false">取消</el-button>
           <el-button class="model-btn-primary" :loading="saving" @click="saveConfig">保存配置</el-button>
@@ -286,6 +286,7 @@ export default {
       testLlmConfigDraft({
         id: this.form.id,
         providerType: this.form.providerType,
+        usageScene: this.form.usageScene,
         apiBaseUrl: this.form.apiBaseUrl.trim(),
         model: this.form.model.trim(),
         apiKey: this.form.apiKey,
@@ -328,7 +329,7 @@ export default {
         .finally(() => { this.testingId = null })
     },
     providerLabel(value) {
-      return { OPENAI_COMPAT: 'API Key', OLLAMA: 'Ollama', LOCAL_COMPAT: '本地兼容' }[value] || value
+      return { OPENAI_COMPAT: 'OpenAI 兼容', OLLAMA: 'Ollama 原生', LOCAL_COMPAT: '本地 OpenAI 兼容' }[value] || value
     },
     sceneLabel(value) {
       const scene = SCENES.find(item => item.value === value)

@@ -746,6 +746,21 @@ CREATE TABLE IF NOT EXISTS wiki_asset (
   description varchar(1000), content longtext, tags varchar(500), status char(1) DEFAULT '0', create_by varchar(64), create_time datetime,
   update_by varchar(64), update_time datetime, PRIMARY KEY(asset_id), KEY idx_asset_type(asset_type), KEY idx_asset_space(space_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS wiki_asset_chunk (
+  chunk_id bigint NOT NULL AUTO_INCREMENT, space_id bigint, asset_id bigint NOT NULL,
+  title varchar(200) NOT NULL, source_ref varchar(500),
+  source_version char(64) NOT NULL, chunk_index int NOT NULL, paragraph_no int NOT NULL,
+  start_offset int NOT NULL, content text NOT NULL, PRIMARY KEY(chunk_id),
+  UNIQUE KEY uk_wiki_chunk_asset_index(asset_id, chunk_index),
+  KEY idx_wiki_chunk_asset_version(asset_id, source_version),
+  KEY idx_wiki_chunk_space_asset(space_id, asset_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS wiki_asset_chunk_index (
+  asset_id bigint NOT NULL, space_id bigint NULL, source_version char(64) NULL,
+  status varchar(20) NOT NULL, chunk_count int NOT NULL DEFAULT 0, indexed_at datetime NOT NULL,
+  PRIMARY KEY(asset_id), KEY idx_wiki_chunk_index_status(status, indexed_at),
+  KEY idx_wiki_chunk_index_space(space_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 CREATE TABLE IF NOT EXISTS ontology_datasource (
   datasource_id bigint NOT NULL AUTO_INCREMENT, name varchar(100) NOT NULL, db_type varchar(20) NOT NULL, host varchar(255), port int,
   database_name varchar(100), schema_name varchar(100), jdbc_url varchar(1000), username varchar(100), password_enc text, sample_limit int DEFAULT 20,
@@ -756,6 +771,56 @@ CREATE TABLE IF NOT EXISTS analysis_task (
   task_id bigint NOT NULL AUTO_INCREMENT, task_name varchar(200) NOT NULL, source_id bigint, wiki_space_id bigint, scope varchar(1000), status varchar(30) DEFAULT 'DRAFT',
   summary text, create_by varchar(64), create_time datetime, update_by varchar(64), update_time datetime, PRIMARY KEY(task_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS ontology_analysis_run (
+  run_id bigint NOT NULL AUTO_INCREMENT,
+  task_id bigint NOT NULL,
+  run_token varchar(64) NOT NULL,
+  run_kind varchar(10) NOT NULL,
+  source_id bigint,
+  wiki_space_id bigint,
+  selection_json longtext NOT NULL,
+  username varchar(64) NOT NULL,
+  started_at bigint NOT NULL,
+  finished_at bigint,
+  status varchar(20) NOT NULL,
+  stage varchar(30) NOT NULL,
+  model_calls int NOT NULL DEFAULT 0,
+  proposal_id bigint,
+  PRIMARY KEY (run_id),
+  UNIQUE KEY uk_analysis_run_token (run_token),
+  KEY idx_analysis_run_task (task_id, run_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS ontology_analysis_model_call (
+  call_id bigint NOT NULL AUTO_INCREMENT,
+  task_id bigint NOT NULL,
+  run_token varchar(64) NOT NULL,
+  call_number int NOT NULL,
+  stage varchar(30) NOT NULL,
+  started_at bigint NOT NULL,
+  finished_at bigint NOT NULL,
+  duration_ms bigint NOT NULL,
+  status varchar(20) NOT NULL,
+  failure_type varchar(100),
+  PRIMARY KEY (call_id),
+  UNIQUE KEY uk_analysis_model_call (run_token, call_number),
+  KEY idx_analysis_model_call_run (task_id, run_token)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS ontology_analysis_stage_timing (
+  timing_id bigint NOT NULL AUTO_INCREMENT,
+  task_id bigint NOT NULL,
+  run_token varchar(64) NOT NULL,
+  stage varchar(40) NOT NULL,
+  started_at bigint NOT NULL,
+  finished_at bigint NOT NULL,
+  duration_ms bigint NOT NULL,
+  status varchar(20) NOT NULL,
+  failure_type varchar(100),
+  PRIMARY KEY (timing_id),
+  KEY idx_analysis_stage_timing_run (task_id, run_token, timing_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS ontology_analysis_job (
   task_id bigint NOT NULL,
   run_token varchar(64) NOT NULL,
@@ -784,7 +849,7 @@ CREATE TABLE IF NOT EXISTS wiki_chat_session (
   create_time datetime, update_time datetime, PRIMARY KEY(session_id,created_by), KEY idx_wiki_chat_session_user(created_by,update_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 CREATE TABLE IF NOT EXISTS wiki_chat_citation (
-  message_id bigint NOT NULL, asset_id bigint NOT NULL, PRIMARY KEY(message_id,asset_id), KEY idx_wiki_chat_citation_asset(asset_id)
+  message_id bigint NOT NULL, asset_id bigint NOT NULL, evidence_json text NULL, PRIMARY KEY(message_id,asset_id), KEY idx_wiki_chat_citation_asset(asset_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 CREATE TABLE IF NOT EXISTS ontology_proposal (
   proposal_id bigint NOT NULL AUTO_INCREMENT, proposal_name varchar(200) NOT NULL, proposal_type varchar(30) NOT NULL, task_id bigint,

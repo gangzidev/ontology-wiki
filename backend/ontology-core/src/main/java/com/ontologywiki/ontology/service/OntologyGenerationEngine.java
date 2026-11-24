@@ -26,10 +26,14 @@ public class OntologyGenerationEngine {
         Set<String> foundNames = new HashSet<>();
         for (Map<String,Object> table : list(previous == null ? null : previous.get("tables"))) {
             String name = text(table.get("name")).toLowerCase(Locale.ROOT); foundNames.add(name);
-            if (!changedTables.contains(name)) mergedTables.put(schemaTableKey(table), table);
+            String key = schemaTableKey(table);
+            foundNames.add(key);
+            if (!changedTables.contains(name) && !changedTables.contains(key)) mergedTables.put(key, table);
         }
         for (Map<String,Object> table : list(scanned == null ? null : scanned.get("tables"))) {
-            foundNames.add(text(table.get("name")).toLowerCase(Locale.ROOT)); mergedTables.put(schemaTableKey(table), table);
+            String name = text(table.get("name")).toLowerCase(Locale.ROOT);
+            String key = schemaTableKey(table);
+            foundNames.add(name); foundNames.add(key); mergedTables.put(key, table);
         }
         for (String name : changedTables) if (!foundNames.contains(name)) throw new IllegalArgumentException("变化表未出现在历史快照或当前数据源中：" + name);
         Map<String,Object> result = new LinkedHashMap<>(previous == null ? Collections.<String,Object>emptyMap() : previous);
@@ -57,7 +61,9 @@ public class OntologyGenerationEngine {
     }
 
     private String schemaTableKey(Map<String,Object> table) {
-        return (text(table.get("schema")) + "." + text(table.get("name"))).toLowerCase(Locale.ROOT);
+        String schema = text(table.get("schema"));
+        String name = text(table.get("name"));
+        return (schema == null ? name : schema + "." + name).toLowerCase(Locale.ROOT);
     }
 
     public Map<String, Object> generate(Map<String, Object> schema,
@@ -98,7 +104,6 @@ public class OntologyGenerationEngine {
         stageReports.add(report(8, "查询语义候选", semanticCatalog));
 
         result.put("version", "1.0");
-        result.put("stages", requestedStages == null || requestedStages.isEmpty() ? Arrays.asList(1,2,3,4,5,6,7,8) : new ArrayList<>(requestedStages));
         result.put("objects", stage4.get("objects"));
         result.put("properties", stage2.get("properties"));
         result.put("identitySpecs", stage2.get("identitySpecs"));

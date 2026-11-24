@@ -1,5 +1,8 @@
 package com.ontologywiki.ontology.service;
 
+import com.ontologywiki.ontology.repository.RowIds;
+import cn.hutool.core.collection.CollUtil;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ontologywiki.ontology.config.OntologyIntegrationProperties;
@@ -8,7 +11,7 @@ import com.ontologywiki.ontology.mapper.LlmSettingsMapper;
 import com.ontologywiki.ontology.mapper.LlmWikiAnalysisMapper;
 import com.ontologywiki.ontology.mapper.WikiAssetMapper;
 import com.ontologywiki.ontology.service.wiki.WikiIndexService;
-import org.springframework.http.*;
+import com.ontologywiki.ontology.service.llm.ModelCompletionGateway;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestTemplate;
@@ -32,7 +35,6 @@ import java.util.regex.Pattern;
  */
 @Service
 public class LlmWikiClient {
-
     /** 资产启用状态 */
     private static final String STATUS_ACTIVE = "0";
 
@@ -48,9 +50,7 @@ public class LlmWikiClient {
     /** 已确认状态 */
     private static final String MEMORY_STATUS_CONFIRMED = "CONFIRMED";
 
-    /** 问答检索：原始资料与 Wiki 页面各自的最大候选数 */
-    private static final int QUERY_SOURCE_LIMIT = 100;
-    private static final int QUERY_PAGE_LIMIT = 200;
+    private static final int EVIDENCE_CANDIDATES = 12;
 
     /** 已确认知识：结构化条目与分析说明的最大取数 */
     private static final int KNOWLEDGE_ITEM_LIMIT = 200;
@@ -60,12 +60,16 @@ public class LlmWikiClient {
     private static final int DEFAULT_KNOWLEDGE_ITEMS = 15;
 
     private final OntologyIntegrationProperties properties;
-    private final RestTemplate rest;
+    private final ModelCompletionGateway modelGateway;
     private final CredentialService credentials;
     private final LlmWikiAnalysisMapper analysisMapper;
     private final WikiAssetMapper assetMapper;
     private final LlmSettingsMapper settingsMapper;
     private final WikiIndexService indexService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.ontologywiki.ontology.service.wiki.WikiRelationService relationService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.ontologywiki.ontology.service.wiki.WikiChunkIndexService chunkIndexService;
     private final ObjectMapper json = new ObjectMapper();
     @org.springframework.beans.factory.annotation.Autowired
     private com.ontologywiki.ontology.service.analysis.ProposalChangeService proposalChanges = new com.ontologywiki.ontology.service.analysis.ProposalChangeService();
@@ -79,7 +83,7 @@ public class LlmWikiClient {
                          WikiAssetMapper assetMapper, LlmSettingsMapper settingsMapper,
                          WikiIndexService indexService) {
         this.properties = properties;
-        this.rest = rest;
+        this.modelGateway = new ModelCompletionGateway(rest, json);
         this.credentials = credentials;
         this.analysisMapper = analysisMapper;
         this.assetMapper = assetMapper;
@@ -160,9 +164,10 @@ public class LlmWikiClient {
     public Map<String,Object> testModelSettings() {
         Map<String,Object> result = new LinkedHashMap<>();
         if (!enabled()) throw new IllegalStateException("请先保存并启用模型配置");
-        String answer = openAiText("请仅回复：连接成功");
+        Map<String,Object> selected = configForScene("ALL");
+        String answer = modelGateway.complete("请仅回复：连接成功", "ALL", selected);
         if (text(answer) == null) throw new IllegalStateException("模型 API 未返回有效内容");
-        result.put("connected", true); result.put("model", configForScene("ALL").get("model")); result.put("message", "模型 API 调用成功");
+        result.put("connected", true); result.put("model", selected.get("model")); result.put("message", "模型 API 调用成功");
         return result;
     }
 
@@ -182,7 +187,7 @@ public class LlmWikiClient {
                 ? analysisMapper.selectLatestProposal(taskId)
                 : analysisMapper.selectProposal(taskId, requestedProposalId);
         if (requestedProposalId != null && proposals.isEmpty()) throw new IllegalArgumentException("配置草案不存在或不属于当前分析任务");
-        Long proposalId = proposals.isEmpty() ? null : ((Number) proposals.get(0).get("proposal_id")).longValue();
+        Long proposalId = proposals.isEmpty() ? null : RowIds.first(proposals, "proposal_id");
         Integer maxVersion = analysisMapper.selectMaxVersion(taskId);
         int version = (maxVersion == null ? 0 : maxVersion) + 1;
         String status = confirm ? MEMORY_STATUS_CONFIRMED : "DRAFT";
@@ -210,8 +215,21 @@ public class LlmWikiClient {
             String title = "分析知识 · " + task.get("task_name") + " · v" + version;
             String content = "# " + title + "\n\n" + memoryContent + "\n\n> 来源：分析任务 #" + taskId + "，配置草案 #" + (proposalId == null ? "—" : proposalId) + "。该页面由分析者确认后沉淀，可在后续分析中作为已确认知识参考。";
             List<Map<String,Object>> pages = assetMapper.selectPageByTag(tag);
-            if (pages.isEmpty()) assetMapper.insertKnowledgePage(task.get("wiki_space_id"), title, "已确认分析知识", content, tag, username);
-            else assetMapper.updateKnowledgePage(task.get("wiki_space_id"), title, "已确认分析知识", content, username, ((Number) pages.get(0).get("asset_id")).longValue());
+            boolean updatingPage = !pages.isEmpty();
+            Long previousSpaceId = null;
+            if (updatingPage) {
+                long pageAssetId = RowIds.first(pages, "asset_id");
+                previousSpaceId = pageSpaceId(pageAssetId);
+                assetMapper.updateKnowledgePage(task.get("wiki_space_id"), title, "已确认分析知识", content, username, pageAssetId);
+            } else {
+                assetMapper.insertKnowledgePage(task.get("wiki_space_id"), title, "已确认分析知识", content, tag, username);
+            }
+            pages = assetMapper.selectPageByTag(tag);
+            if (!pages.isEmpty()) {
+                long pageAssetId = RowIds.first(pages, "asset_id");
+                refreshChunkIndex(pageAssetId);
+                refreshPageRelations(pageAssetId, updatingPage, previousSpaceId);
+            }
             refreshIndex();
             // 拆出结构化知识条目，提升下次分析的召回精度
             if (!savedConfig.isEmpty()) {
@@ -326,8 +344,9 @@ public class LlmWikiClient {
         List<Map<String,Object>> rows = analysisMapper.selectEnabledSettings(1);
         for (Map<String,Object> row : rows) {
             if (value(row.get("api_base_url")).trim().isEmpty()) continue;
-            // Ollama 等本地接入允许没有 API Key
-            if ("OLLAMA".equalsIgnoreCase(value(row.get("provider_type")))) return true;
+            // 本地协议可选鉴权。远程 OpenAI 兼容服务需要 API Key。
+            String provider = value(row.get("provider_type"));
+            if ("OLLAMA".equalsIgnoreCase(provider) || "LOCAL_COMPAT".equalsIgnoreCase(provider)) return true;
             if (!value(row.get("api_key_enc")).trim().isEmpty()) return true;
         }
         return false;
@@ -368,26 +387,38 @@ public class LlmWikiClient {
         if (text(question) == null || question.length() > 100000) throw new IllegalArgumentException("问题不能为空且不超过100000字");
         boolean analysisScope = "ANALYSIS".equals(scopeType);
         boolean assetScope = "ASSET".equals(scopeType);
-        String sourceTag = scopeId == null ? null : "SOURCE:" + scopeId;
-
-        // 分析范围内不检索 Wiki，仅依赖草案候选；其余范围按资产 / 空间 / 全库取候选
-        List<Map<String, Object>> sources = analysisScope ? new ArrayList<>()
-                : assetMapper.selectQuerySources(STATUS_ACTIVE, assetScope, WikiAssetType.WIKI_PAGE.getCode(),
-                        scopeId, sourceTag, spaceId, QUERY_SOURCE_LIMIT);
-        List<Map<String, Object>> pages = analysisScope ? new ArrayList<>()
-                : assetMapper.selectQueryPages(STATUS_ACTIVE, WikiAssetType.WIKI_PAGE.getCode(), SYSTEM_INDEX_TAG,
-                        assetScope, scopeId, sourceTag, spaceId, QUERY_PAGE_LIMIT);
-        List<Map<String, Object>> index = new ArrayList<>(); index.addAll(pages); index.addAll(sources);
         String conversation = conversationText(history);
-        String retrievalQuestion = clip(question, 2000) + (conversation.isEmpty() ? "" : "\n会话上下文：" + clip(conversation, 1600));
+        List<Map<String,Object>> citedSources = Collections.emptyList();
+        if (!analysisScope) {
+            List<String> terms = wikiRetriever.searchTerms(clip(question, 2000));
+            // For short follow-up questions, include the most recent user question as context.
+            if (question.length() <= 40 && history != null
+                    && question.matches(".*(它|上述|前面|刚才|这[个些项条]|继续|举例|详细说|为什么呢).*")) {
+                for (int i = history.size() - 1; i >= 0; i--) {
+                    Map<String,Object> previous = history.get(i);
+                    if (previous != null && "user".equals(previous.get("role"))) {
+                        terms = wikiRetriever.searchTerms(question + "\n" + clip(value(previous.get("content")), 240));
+                        break;
+                    }
+                }
+            }
+            if (!terms.isEmpty()) {
+                if (chunkIndexService != null) {
+                    citedSources = chunkIndexService.search(terms, assetScope, scopeId, spaceId, 3);
+                }
+                if (citedSources.isEmpty()) {
+                    List<Map<String,Object>> candidates = assetMapper.selectEvidenceCandidates(
+                            terms, assetScope, scopeId, spaceId, EVIDENCE_CANDIDATES);
+                    citedSources = wikiRetriever.evidence(candidates, terms, 3);
+                }
+            }
+        }
         Map<String,Object> analysisState = analysisScope ? analysisTaskState(scopeId, proposalId, previousChanges, question, contextState, allowDeterministicChange) : Collections.<String,Object>emptyMap();
         String taskContext = String.valueOf(analysisState.getOrDefault("context", ""));
-        List<Map<String, Object>> selected = analysisScope ? Collections.<Map<String, Object>>emptyList() : wikiRetriever.rank(index, retrievalQuestion, 3);
-        String context = analysisScope ? "" : selected.isEmpty() ? "暂无匹配的 Wiki 资料。" : selected.stream().map(r -> {
-            Map<String,Object> content = assetMapper.selectAssetContent(((Number) r.get("asset_id")).longValue()).stream().findFirst().orElse(Collections.emptyMap());
-            String evidence = wikiRetriever.evidenceSnippet(value(content.get("content")), retrievalQuestion, 1200);
-            return "[" + r.get("asset_type") + "] " + r.get("asset_name") + "\n" + evidence;
-        }).collect(Collectors.joining("\n\n"));
+        String context = citedSources.isEmpty() ? "暂无匹配的 Wiki 资料。" : citedSources.stream()
+                .map(hit -> "[" + hit.get("assetType") + "] " + hit.get("title") + " · 第"
+                        + hit.get("paragraph") + "段\n" + hit.get("excerpt"))
+                .collect(Collectors.joining("\n\n"));
         String prompt = analysisScope
                 ? "你是本体分析结果助手。必须只依据当前提供的完整分析配置回答，不得编造配置外的信息。回答任何关于对象、字段、关系、逻辑、动作、服务流、权限、指标、维度和术语的问题。用户明确要求新增、修改或删除时，先在 answer 说明变更，changes 返回待确认差异；没有明确变更意图时 changes 必须为空。严格只返回 JSON：{\"answer\":\"面向用户的中文说明\",\"changes\":[{\"op\":\"UPDATE\",\"category\":\"properties\",\"id\":\"候选ID\",\"field\":\"dataType\",\"value\":\"TEXT\",\"reason\":\"修改原因\"}]}。op 只能是 UPDATE、ADD、DELETE：UPDATE 修改已有项的白名单字段；ADD 的 value 必须是完整的新对象，必须包含稳定 id 和该分类要求的字段；DELETE 只能删除用户明确指定的已有 id。不得执行 SQL，不得返回配置草案 JSON 或 Wiki Markdown；目标不唯一、字段不足或新增信息不完整时先追问，changes 返回空数组。\n\n当前分析任务与完整配置：\n" + clip(taskContext, 18000)
                 : "请根据以下本体 Wiki 页面、来源资料和分析任务上下文回答问题；业务问题没有资料证据时，明确说明当前资料中未找到依据，不要猜测。若用户是在问候或闲聊，请自然、简短地回应，不要求 Wiki 资料。分析任务中的候选配置尚待人工审核。中文作答，并结合对话上下文回答本轮问题。\n\n资料：\n" + clip(context, 4200) + (taskContext.isEmpty() ? "" : "\n\n关联分析任务与候选内容：\n" + clip(taskContext, 1500));
@@ -396,13 +427,6 @@ public class LlmWikiClient {
         JsonNode analysisReply = analysisScope ? parse(rawAnswer) : null;
         String answer = analysisScope && analysisReply != null && analysisReply.path("answer").isTextual()
                 ? analysisReply.path("answer").asText() : rawAnswer;
-        List<Map<String,Object>> citedSources = selected.stream().map(r -> {
-            Map<String,Object> cited = new LinkedHashMap<>();
-            cited.put("assetId", ((Number) r.get("asset_id")).longValue());
-            cited.put("assetType", r.get("asset_type"));
-            cited.put("title", r.get("asset_name"));
-            return cited;
-        }).collect(Collectors.toList());
         Map<String,Object> result = new LinkedHashMap<>(); result.put("answer", answer); result.put("provider", "internal");
         if (analysisScope) {
             List<Map<String,Object>> combined = new ArrayList<>((List<Map<String,Object>>) analysisState.getOrDefault("changes", Collections.emptyList()));
@@ -431,7 +455,7 @@ public class LlmWikiClient {
         result.put("citedPages", citedSources.stream().map(r -> r.get("title")).collect(Collectors.toList()));
         result.put("citedSources", citedSources);
         result.put("citationIds", citedSources.stream().map(r -> r.get("assetId")).collect(Collectors.toList()));
-        if (saveAsPage && !analysisScope && !selected.isEmpty()) {
+        if (saveAsPage && !analysisScope && !citedSources.isEmpty()) {
             String title = "问答 " + LocalDateTime.now().toString().replace(':', '-');
             Map<String,String> page = new LinkedHashMap<>(); page.put("slug", title); page.put("content", "# " + title + "\n\n" + result.get("answer")); createPage(page, spaceId);
             result.put("savedToWiki", true); result.put("pageTitle", title);
@@ -765,18 +789,41 @@ public class LlmWikiClient {
         String content = clip(page.path("content").asText(), 1000000);
         String tag = "SOURCE:" + assetId;
         List<Map<String,Object>> existing = assetMapper.selectPageBySourceTag(WikiAssetType.WIKI_PAGE.getCode(), tag);
-        if (existing.isEmpty()) assetMapper.insertIngestedPage(source.get("space_id") == null ? null : ((Number) source.get("space_id")).longValue(), title, WikiAssetType.WIKI_PAGE.getCode(), source.get("domain_name"), clip(page.path("summary").asText("来源资料摘要"),1000), content, tag, STATUS_ACTIVE);
-        else assetMapper.updateIngestedPage(source.get("space_id") == null ? null : ((Number) source.get("space_id")).longValue(), title, source.get("domain_name"), clip(page.path("summary").asText("来源资料摘要"),1000), content, ((Number) existing.get(0).get("asset_id")).longValue());
+        boolean updatingPage = !existing.isEmpty();
+        Long previousSpaceId = null;
+        if (updatingPage) {
+            long pageAssetId = RowIds.first(existing, "asset_id");
+            previousSpaceId = pageSpaceId(pageAssetId);
+            assetMapper.updateIngestedPage(source.get("space_id") == null ? null : ((Number) source.get("space_id")).longValue(), title, source.get("domain_name"), clip(page.path("summary").asText("来源资料摘要"),1000), content, pageAssetId);
+        } else {
+            assetMapper.insertIngestedPage(source.get("space_id") == null ? null : ((Number) source.get("space_id")).longValue(), title, WikiAssetType.WIKI_PAGE.getCode(), source.get("domain_name"), clip(page.path("summary").asText("来源资料摘要"),1000), content, tag, STATUS_ACTIVE);
+            existing = assetMapper.selectPageBySourceTag(WikiAssetType.WIKI_PAGE.getCode(), tag);
+        }
+        if (!existing.isEmpty()) {
+            long pageAssetId = RowIds.first(existing, "asset_id");
+            refreshChunkIndex(pageAssetId);
+            refreshPageRelations(pageAssetId, updatingPage, previousSpaceId);
+        }
         refreshIndex();
-        Map<String,Object> result = new LinkedHashMap<>(); result.put("title", title); result.put("sourceId", assetId); result.put("updated", !existing.isEmpty()); return result;
+        Map<String,Object> result = new LinkedHashMap<>(); result.put("title", title); result.put("sourceId", assetId); result.put("updated", updatingPage); return result;
     }
 
     public Map<String, Object> health() {
-        Map<String,Object> result = new LinkedHashMap<>(); result.put("enabled", enabled()); result.put("provider", "internal");
-        if (!enabled()) { result.put("connected", false); result.put("message", "请配置 LLM_API_BASE_URL 和 LLM_API_KEY"); return result; }
-        try { result.put("connected", true); result.put("response", parse(openAiExchange("/models", HttpMethod.GET, null))); }
-        catch (Exception e) { result.put("connected", false); result.put("message", "模型 API 不可用"); }
-        return result;
+        return Collections.singletonMap("enabled", enabled());
+    }
+
+    private void refreshChunkIndex(long assetId) {
+        if (chunkIndexService != null) chunkIndexService.refreshAsset(assetId);
+    }
+
+    private Long pageSpaceId(long assetId) {
+        return relationService == null ? null : relationService.pageSpaceId(assetId);
+    }
+
+    private void refreshPageRelations(long assetId, boolean updatingPage, Long previousSpaceId) {
+        if (relationService == null) return;
+        if (!updatingPage) relationService.refreshPage(assetId);
+        else relationService.refreshPage(assetId, previousSpaceId);
     }
 
     /** URL 作为待整理来源记录；服务端不主动抓取任意地址，避免内网 SSRF。 */
@@ -792,9 +839,9 @@ public class LlmWikiClient {
     public Object listPages() { return assetMapper.selectPages(WikiAssetType.WIKI_PAGE.getCode(), STATUS_ACTIVE); }
     public Object getPage(String slug) { List<Map<String,Object>> rows=assetMapper.selectPageBySlug(WikiAssetType.WIKI_PAGE.getCode(), segment(slug), STATUS_ACTIVE); if(rows.isEmpty()) throw new IllegalArgumentException("Wiki 页面不存在"); return rows.get(0); }
     public Object createPage(Map<String,String> body) { return createPage(body, null); }
-    public Object createPage(Map<String,String> body, Long spaceId) { if(body==null||text(body.get("slug"))==null) throw new IllegalArgumentException("Wiki 页面标题不能为空"); String slug=clip(segment(body.get("slug")),200); assetMapper.insertPage(spaceId, slug, WikiAssetType.WIKI_PAGE.getCode(), "人工维护页面", clip(body.get("content"),1000000), STATUS_ACTIVE); refreshIndex(); return getPage(slug); }
-    public Object updatePage(String slug,Map<String,String> body) { String key=segment(slug); int n=assetMapper.updatePageContent(clip(body==null?null:body.get("content"),1000000), WikiAssetType.WIKI_PAGE.getCode(), key, STATUS_ACTIVE); if(n==0) throw new IllegalArgumentException("Wiki 页面不存在"); refreshIndex(); return getPage(key); }
-    public Object deletePage(String slug) { int n=assetMapper.softDeletePage("1", WikiAssetType.WIKI_PAGE.getCode(), segment(slug)); refreshIndex(); return n>0; }
+    public Object createPage(Map<String,String> body, Long spaceId) { if(body==null||text(body.get("slug"))==null) throw new IllegalArgumentException("Wiki 页面标题不能为空"); String slug=clip(segment(body.get("slug")),200); assetMapper.insertPage(spaceId, slug, WikiAssetType.WIKI_PAGE.getCode(), "人工维护页面", clip(body.get("content"),1000000), STATUS_ACTIVE); Map<String,Object> page=CollUtil.getFirst(assetMapper.selectPageBySlug(WikiAssetType.WIKI_PAGE.getCode(), slug, STATUS_ACTIVE)); long assetId=RowIds.required(page, "id"); refreshChunkIndex(assetId); refreshPageRelations(assetId, false, null); refreshIndex(); return page; }
+    public Object updatePage(String slug,Map<String,String> body) { String key=segment(slug); int n=assetMapper.updatePageContent(clip(body==null?null:body.get("content"),1000000), WikiAssetType.WIKI_PAGE.getCode(), key, STATUS_ACTIVE); if(n==0) throw new IllegalArgumentException("Wiki 页面不存在"); Map<String,Object> page=CollUtil.getFirst(assetMapper.selectPageBySlug(WikiAssetType.WIKI_PAGE.getCode(), key, STATUS_ACTIVE)); long assetId=RowIds.required(page, "id"); refreshChunkIndex(assetId); refreshPageRelations(assetId, true, null); refreshIndex(); return page; }
+    public Object deletePage(String slug) { String key=segment(slug); int n=assetMapper.softDeletePage("1", WikiAssetType.WIKI_PAGE.getCode(), key); if(n>0) { List<Map<String,Object>> page=assetMapper.selectExistingPage(WikiAssetType.WIKI_PAGE.getCode(), key, "1"); if(!page.isEmpty()) { long assetId=RowIds.first(page, "asset_id"); refreshChunkIndex(assetId); refreshPageRelations(assetId, true, null); } } refreshIndex(); return n>0; }
     public Object categoryPages(String category) { return assetMapper.selectPagesByCategory(WikiAssetType.WIKI_PAGE.getCode(), STATUS_ACTIVE, category); }
     public Object fileTree() { return listPages(); }
     public Object fileContent(String path) { return getPage(path.replaceFirst("^wiki/","").replaceFirst("\\.md$","")); }
@@ -848,8 +895,9 @@ public class LlmWikiClient {
         indexService.refreshIndex();
     }
 
-    private String openAiText(String prompt) {
-        return openAiText(prompt, "ALL");
+    public Map<String, Object> testModelConnection(String baseUrl, String apiKey, String model,
+                                                   String provider, Object settingId, Object usageScene) {
+        return modelGateway.testConnection(baseUrl, apiKey, model, provider, settingId, usageScene);
     }
 
     /**
@@ -864,13 +912,7 @@ public class LlmWikiClient {
     }
 
     private String openAiText(String prompt, String scene) {
-        Map<String,Object> cfg = configForScene(scene);
-        String baseUrl = String.valueOf(cfg.get("apiBaseUrl"));
-        String apiKey  = String.valueOf(cfg.getOrDefault("apiKey", ""));
-        String model   = String.valueOf(cfg.get("model"));
-        Map<String,Object> body=new LinkedHashMap<>(); body.put("model", model); body.put("temperature",0.1);
-        Map<String,Object> message=new LinkedHashMap<>(); message.put("role","user"); message.put("content",prompt); body.put("messages",Collections.singletonList(message));
-        JsonNode root=parse(openAiExchange("/chat/completions",HttpMethod.POST,body,baseUrl,apiKey)); JsonNode content=root==null?null:root.path("choices").path(0).path("message").path("content"); return content==null||content.isMissingNode()?"":content.asText();
+        return modelGateway.complete(prompt, scene, configForScene(scene));
     }
 
     /**
@@ -888,6 +930,9 @@ public class LlmWikiClient {
         }
         Map<String,Object> row = rows.get(0);
         Map<String,Object> result = new LinkedHashMap<>();
+        result.put("settingId", row.get("id"));
+        result.put("usageScene", row.get("usage_scene") == null ? scene : row.get("usage_scene"));
+        result.put("providerType", row.get("provider_type") == null ? "OPENAI_COMPAT" : row.get("provider_type"));
         result.put("apiBaseUrl", row.get("api_base_url") == null ? "" : String.valueOf(row.get("api_base_url")));
         result.put("model", row.get("model") == null ? "" : String.valueOf(row.get("model")));
         String apiKey = "";
@@ -895,24 +940,12 @@ public class LlmWikiClient {
             try { apiKey = credentials.decrypt(String.valueOf(row.get("api_key_enc"))); } catch (Exception ignored) { }
         }
         result.put("apiKey", apiKey);
+        result.put("configSource", row.get("usage_scene") == null || scene.equals(row.get("usage_scene")) ? "SCENE" : "ALL_FALLBACK");
         return result;
     }
 
-    private String openAiExchange(String path,HttpMethod method,Object body) {
-        Map<String,Object> cfg = configForScene("ALL");
-        return openAiExchange(path, method, body, String.valueOf(cfg.get("apiBaseUrl")), String.valueOf(cfg.get("apiKey")));
-    }
-
-    private String openAiExchange(String path,HttpMethod method,Object body,String baseUrl,String apiKey) {
-        HttpHeaders headers=new HttpHeaders(); headers.setContentType(MediaType.APPLICATION_JSON);
-        if (apiKey != null && !apiKey.trim().isEmpty()) headers.setBearerAuth(apiKey.trim());
-        ResponseEntity<String> response=rest.exchange(URI.create(join(baseUrl,path)),method,new HttpEntity<>(body,headers),String.class);
-        if(!response.getStatusCode().is2xxSuccessful()) throw new IllegalStateException("模型 API 返回 HTTP "+response.getStatusCodeValue());
-        return response.getBody()==null?"":response.getBody();
-    }
     private JsonNode parse(String raw) { try { if(raw==null||raw.trim().isEmpty())return null; String s=raw.trim().replaceFirst("(?s)^```(?:json)?\\s*","").replaceFirst("\\s*```$",""); int a=s.indexOf('{'),b=s.lastIndexOf('}'); if(a>=0&&b>a)s=s.substring(a,b+1); return json.readTree(s); } catch(Exception e) { return null; } }
     private void requireEnabled() { if(!enabled()) throw new IllegalStateException("内置 LLM Wiki 未配置模型 API"); }
-    private String join(String base,String path) { String a=base==null?"":base.trim(),b=path==null?"":path.trim(); return a.endsWith("/")&&b.startsWith("/")?a.substring(0,a.length()-1)+b:!a.endsWith("/")&&!b.startsWith("/")?a+"/"+b:a+b; }
     private String segment(String value) { String v=text(value); if(v==null||v.indexOf('/')>=0||v.indexOf('\\')>=0||".".equals(v)||"..".equals(v)) throw new IllegalArgumentException("Wiki 页面标识无效"); return v; }
     private String text(String value) { return value==null||value.trim().isEmpty()?null:value.trim(); }
     private String clip(String value,int max) { return value==null?"":value.substring(0,Math.min(value.length(),max)); }

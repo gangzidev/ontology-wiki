@@ -5,13 +5,12 @@ spring:
         driverClassName: com.mysql.cj.jdbc.Driver
         druid:
             # 主库数据源
-            # 启动前请把下面的地址、账号、密码改成实际环境的连接信息。
             master:
                 # 远程数据库的大 JSON 使用驱动协议压缩，减少传输耗时。
                 connectionProperties: useCompression=true
-                url: jdbc:mysql://127.0.0.1:3306/ontology-wiki?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&serverTimezone=Asia/Shanghai
+                url: jdbc:mysql://182.92.153.153:3309/ontology-wiki?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&serverTimezone=Asia/Shanghai
                 username: ontology-wiki
-                password: change-me
+                password: T3RbjW4iFLPjhZAB
             # 从库数据源
             slave:
                 # 从数据源开关/默认关闭

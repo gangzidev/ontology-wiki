@@ -94,6 +94,26 @@ public class OntologyGenerationEngineQualityTest {
     }
 
     @Test
+    public void incrementalSnapshotUsesSchemaQualifiedTableIdentity() {
+        OntologyGenerationEngine engine = new OntologyGenerationEngine();
+        Map<String,Object> firstSchema = table("orders", "Schema A", true);
+        firstSchema.put("schema", "a");
+        Map<String,Object> secondSchema = table("orders", "Schema B", true);
+        secondSchema.put("schema", "b");
+        Map<String,Object> snapshot = engine.schemaMetadataSnapshot(schema(firstSchema, secondSchema));
+        Map<String,Object> updatedTable = table("orders", "Updated Schema A", true);
+        updatedTable.put("schema", "a");
+
+        Map<String,Object> updated = engine.mergeSchemaSnapshot(snapshot, schema(updatedTable), Collections.singleton("a.orders"));
+        List<Map<String,Object>> tables = (List<Map<String,Object>>) updated.get("tables");
+        Assert.assertEquals(2, tables.size());
+        Map<String,Object> updatedBySchema = new HashMap<>();
+        for (Map<String,Object> table : tables) updatedBySchema.put(String.valueOf(table.get("schema")), table);
+        Assert.assertEquals("Updated Schema A", ((Map<?,?>) updatedBySchema.get("a")).get("comment"));
+        Assert.assertEquals("Schema B", ((Map<?,?>) updatedBySchema.get("b")).get("comment"));
+    }
+
+    @Test
     public void sqlPatternsProduceReviewableActionFlowAndPermissionCandidates() {
         OntologyGenerationEngine engine = new OntologyGenerationEngine();
         Map<String,Object> orderTable = table("orders", "订单", true);

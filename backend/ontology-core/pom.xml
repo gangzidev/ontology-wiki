@@ -4,6 +4,7 @@
   <modelVersion>4.0.0</modelVersion>
   <artifactId>ontology-core</artifactId>
   <dependencies>
+    <dependency><groupId>cn.hutool</groupId><artifactId>hutool-core</artifactId><version>5.8.21</version></dependency>
     <dependency><groupId>com.ontologywiki</groupId><artifactId>ontology-common</artifactId></dependency>
     <dependency><groupId>org.springframework</groupId><artifactId>spring-jdbc</artifactId></dependency>
     <dependency><groupId>mysql</groupId><artifactId>mysql-connector-java</artifactId></dependency>

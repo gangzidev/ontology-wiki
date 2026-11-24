@@ -47,18 +47,24 @@ final class QueryContextRetriever {
     }
 
     Map<String, Object> context(Map<String, Object> config, String question, QuerySemanticCatalogService.Resolution resolution) {
+        return context(config, question, resolution.getMetricIds(), resolution.getDimensionIds(),
+                resolution.getDefaultFilters(), resolution.getDetailObjectId());
+    }
+
+    Map<String, Object> context(Map<String, Object> config, String question, List<String> metricIds,
+                                List<String> dimensionIds, List<Map<String, Object>> filters, String detailObjectId) {
         Map<String, Object> semantics = semantics(config);
         Map<String, Map<String, Object>> metrics = index(rows(semantics.get("metrics")));
         Map<String, Map<String, Object>> properties = index(rows(config.get("properties")));
         Set<String> required = new LinkedHashSet<>();
         Set<String> visitedMetrics = new HashSet<>();
-        for (String metricId : resolution.getMetricIds()) collectMetric(metricId, metrics, required, visitedMetrics);
+        for (String metricId : metricIds) collectMetric(metricId, metrics, required, visitedMetrics);
         for (Map<String, Object> dimension : rows(semantics.get("dimensions"))) {
-            if (resolution.getDimensionIds().contains(text(dimension.get("id")))) required.add(text(dimension.get("propertyId")));
+            if (dimensionIds.contains(text(dimension.get("id")))) required.add(text(dimension.get("propertyId")));
         }
-        for (Map<String, Object> filter : resolution.getDefaultFilters()) required.add(text(filter.get("propertyId")));
+        for (Map<String, Object> filter : filters) required.add(text(filter.get("propertyId")));
         Set<String> selectedObjects = new LinkedHashSet<>();
-        if (resolution.isDetailQuery()) selectedObjects.add(resolution.getDetailObjectId());
+        if (!detailObjectId.isEmpty()) selectedObjects.add(detailObjectId);
         for (String propertyId : required) {
             Map<String, Object> property = properties.get(propertyId);
             if (property != null) selectedObjects.add(text(property.get("objectId")));

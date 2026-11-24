@@ -1,5 +1,7 @@
 package com.ontologywiki.ontology.mcp;
 
+import com.ontologywiki.ontology.repository.RowIds;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ontologywiki.common.annotation.Anonymous;
 import com.ontologywiki.ontology.mapper.McpMapper;
@@ -111,7 +113,7 @@ public class McpController {
             String hash = sha256Hex(token);
             List<Map<String,Object>> rows = mapper.selectEnabledToken(hash, TOKEN_ENABLED);
             if (!rows.isEmpty()) {
-                long tokenId = ((Number) rows.get(0).get("token_id")).longValue();
+                long tokenId = RowIds.first(rows, "token_id");
                 // 刷新最近使用时间，失败不影响本次鉴权
                 mapper.touchToken(tokenId);
                 return null;

@@ -33,6 +33,8 @@ public class MapperXmlLoadTest {
             OntologyAnalysisMapper.class,
             OntologyResourceMapper.class,
             WikiAssetMapper.class,
+            WikiRelationMapper.class,
+            WikiChunkMapper.class,
             WikiChatMapper.class
     };
 

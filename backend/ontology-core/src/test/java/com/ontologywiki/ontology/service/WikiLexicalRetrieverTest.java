@@ -34,6 +34,24 @@ public class WikiLexicalRetrieverTest {
         Assert.assertTrue(snippet.length() <= 30);
     }
 
+    @Test
+    public void longParagraphCitationContainsBoundaryMatchAtItsOriginalOffset() {
+        WikiLexicalRetriever retriever = new WikiLexicalRetriever();
+        Map<String,Object> asset = row(31, "资料标题", "", "");
+        String content = "第一段\r\n\r\n" + String.join("", Collections.nCopies(995, "甲")) + "ORDER_STATUS 等待审核";
+        asset.put("content", content);
+        List<String> terms = retriever.searchTerms("order_status 用户");
+        Assert.assertTrue(terms.contains("order_status"));
+        Map<String,Object> hit = retriever.evidence(Collections.singletonList(asset), terms, 3).get(0);
+        String excerpt = (String) hit.get("excerpt");
+        Assert.assertEquals(2, hit.get("paragraph"));
+        Assert.assertTrue(excerpt.contains("ORDER_STATUS"));
+        Assert.assertTrue(excerpt.length() <= 1000);
+        Assert.assertTrue(content.startsWith(excerpt, (int) hit.get("offset")));
+        Assert.assertTrue(retriever.evidence(Collections.singletonList(asset),
+                retriever.searchTerms("warehouse_id"), 3).isEmpty());
+    }
+
     private Map<String,Object> row(long id, String title, String domain, String description) {
         Map<String,Object> row = new LinkedHashMap<>();
         row.put("asset_id", id); row.put("asset_name", title); row.put("domain_name", domain); row.put("description", description);

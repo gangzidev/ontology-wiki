@@ -160,7 +160,8 @@ public interface WikiChatMapper {
      * @param assetId   资产主键
      * @return 影响行数
      */
-    int insertCitation(@Param("messageId") Long messageId, @Param("assetId") Long assetId);
+    int insertCitation(@Param("messageId") Long messageId, @Param("assetId") Long assetId,
+                       @Param("evidenceJson") String evidenceJson);
 
     /**
      * 批量查询消息引用的资产。

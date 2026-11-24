@@ -42,6 +42,22 @@ public class QueryPlannerFastPathTest {
         Assert.assertFalse(question, planner.isSimpleAggregationQuestion(config, question, catalog.resolve(config, question)));
     }
 
+    @Test
+    public void fieldSelectionHonorsSchemaAndRequiresUnambiguousColumn() {
+        Map<String,Object> schemas = row("objects", Arrays.asList(
+                row("id", "current", "schema", "app", "table", "analysis_task"),
+                row("id", "old", "schema", "archive", "table", "analysis_task")),
+                "properties", Arrays.asList(
+                        row("id", "currentId", "objectId", "current", "name", "编号", "column", "task_id"),
+                        row("id", "sourceId", "objectId", "current", "name", "编号", "column", "source_id"),
+                        row("id", "oldId", "objectId", "old", "name", "编号", "column", "task_id")));
+        Assert.assertTrue(catalog.resolve(schemas, "查看analysis_task的task_id").needsClarification());
+        Assert.assertTrue(catalog.resolve(schemas, "查看app.analysis_task的编号").needsClarification());
+        Assert.assertTrue(catalog.resolve(schemas, "查看missing.analysis_task的数据").needsClarification());
+        Assert.assertEquals("oldId", catalog.resolve(schemas, "查看archive.analysis_task的编号").getFieldId());
+        Assert.assertEquals("currentId", catalog.resolve(schemas, "查看app.analysis_task的task_id").getFieldId());
+    }
+
     private Map<String, Object> row(Object... values) {
         Map<String, Object> result = new LinkedHashMap<>();
         for (int i = 0; i < values.length; i += 2) result.put(String.valueOf(values[i]), values[i + 1]);

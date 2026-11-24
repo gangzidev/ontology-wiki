@@ -1,9 +1,13 @@
 package com.ontologywiki.ontology.service.analysis;
 
+import com.ontologywiki.ontology.repository.RowIds;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ontologywiki.ontology.domain.AnalysisMemoryStatus;
 import com.ontologywiki.ontology.mapper.AnalysisMemoryMapper;
 import com.ontologywiki.ontology.mapper.WikiAssetMapper;
+import com.ontologywiki.ontology.service.wiki.WikiRelationService;
+import com.ontologywiki.ontology.service.wiki.WikiChunkIndexService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -36,11 +40,17 @@ public class AnalysisMemoryService {
     private final AnalysisMemoryMapper memoryMapper;
     private final WikiAssetMapper assetMapper;
     private final ObjectMapper objectMapper;
+    private final WikiRelationService relationService;
+    private final WikiChunkIndexService chunkIndexService;
 
-    public AnalysisMemoryService(AnalysisMemoryMapper memoryMapper, WikiAssetMapper assetMapper, ObjectMapper objectMapper) {
+    public AnalysisMemoryService(AnalysisMemoryMapper memoryMapper, WikiAssetMapper assetMapper,
+                                 ObjectMapper objectMapper, WikiRelationService relationService,
+                                 WikiChunkIndexService chunkIndexService) {
         this.memoryMapper = memoryMapper;
         this.assetMapper = assetMapper;
         this.objectMapper = objectMapper;
+        this.relationService = relationService;
+        this.chunkIndexService = chunkIndexService;
     }
 
     /**
@@ -145,10 +155,20 @@ public class AnalysisMemoryService {
         if (existingPages.isEmpty()) {
             assetMapper.insertKnowledgePage(task.get("wiki_space_id"), title,
                     KNOWLEDGE_PAGE_DESCRIPTION, pageContent, tag, username);
+            existingPages = assetMapper.selectPageByTag(tag);
+            if (!existingPages.isEmpty()) {
+                long assetId = RowIds.first(existingPages, "asset_id");
+                relationService.refreshPage(assetId);
+                chunkIndexService.refreshAsset(assetId);
+            }
         } else {
+            Long pageAssetId = RowIds.first(existingPages, "asset_id");
+            Long previousSpaceId = relationService.pageSpaceId(pageAssetId);
             assetMapper.updateKnowledgePage(task.get("wiki_space_id"), title,
                     KNOWLEDGE_PAGE_DESCRIPTION, pageContent, username,
-                    ((Number) existingPages.get(0).get("asset_id")).longValue());
+                    pageAssetId);
+            relationService.refreshPage(pageAssetId, previousSpaceId);
+            chunkIndexService.refreshAsset(pageAssetId);
         }
     }
 

@@ -11,9 +11,6 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
 import java.net.URI;
-import java.util.Collections;
-import java.util.LinkedHashMap;
-import java.util.Map;
 
 /**
  * LLM 模型调用客户端
@@ -35,6 +32,7 @@ public class LlmClient {
     private final OntologyIntegrationProperties properties;
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
+    private final ModelCompletionGateway gateway;
 
     public LlmClient(OntologyIntegrationProperties properties,
                      RestTemplate restTemplate,
@@ -42,6 +40,7 @@ public class LlmClient {
         this.properties = properties;
         this.restTemplate = restTemplate;
         this.objectMapper = objectMapper;
+        this.gateway = new ModelCompletionGateway(restTemplate, objectMapper);
     }
 
     /**
@@ -74,9 +73,10 @@ public class LlmClient {
         }
 
         try {
-            Map<String, Object> requestBody = buildChatRequest(prompt, temperature, config.getModel());
-            String response = callOpenAiApi("/chat/completions", HttpMethod.POST, requestBody, config);
-            return extractChatContent(response);
+            JsonNode content = gateway.requestContent(prompt, Math.max(0.0, Math.min(2.0, temperature)),
+                    "OPENAI_COMPAT", config.getModel(), config.getApiBaseUrl(), config.getApiKey());
+            if (content.isMissingNode() || content.isNull()) throw new LlmException("模型响应中未找到有效内容");
+            return content.asText();
         } catch (RestClientException e) {
             log.error("LLM API 调用失败: {}", e.getMessage(), e);
             throw new LlmException("模型 API 调用失败: " + e.getMessage(), e);
@@ -139,22 +139,6 @@ public class LlmClient {
     }
 
     /**
-     * 构建 Chat Completions 请求体
-     */
-    private Map<String, Object> buildChatRequest(String prompt, double temperature, String model) {
-        Map<String, Object> message = new LinkedHashMap<>();
-        message.put("role", "user");
-        message.put("content", prompt);
-
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("model", model);
-        body.put("temperature", Math.max(0.0, Math.min(2.0, temperature)));
-        body.put("messages", Collections.singletonList(message));
-
-        return body;
-    }
-
-    /**
      * 调用 OpenAI 兼容接口
      */
     private String callOpenAiApi(String path,
@@ -176,20 +160,6 @@ public class LlmClient {
         }
 
         return response.getBody() == null ? "" : response.getBody();
-    }
-
-    /**
-     * 从 Chat Completions 响应中提取回复内容
-     */
-    private String extractChatContent(String response) throws Exception {
-        JsonNode root = objectMapper.readTree(response);
-        JsonNode contentNode = root.path("choices").path(0).path("message").path("content");
-
-        if (contentNode.isMissingNode() || contentNode.isNull()) {
-            throw new LlmException("模型响应中未找到有效内容");
-        }
-
-        return contentNode.asText();
     }
 
     /**

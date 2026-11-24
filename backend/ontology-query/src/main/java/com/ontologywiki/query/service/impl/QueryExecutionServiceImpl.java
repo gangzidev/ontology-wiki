@@ -38,16 +38,24 @@ public class QueryExecutionServiceImpl implements IQueryExecutionService {
     }
 
     public QueryResult execute(long proposalId, Map<String, Object> plan) {
+        return execute(proposalId, plan, null);
+    }
+
+    @Override
+    public QueryResult execute(long proposalId, Map<String, Object> plan, String configHash) {
         policy.requireExecution(proposalId);
-        return executeValidated(proposalId, plan);
+        return executeValidated(proposalId, plan, configHash);
     }
 
     public QueryResult executeForEvaluation(long proposalId, Map<String, Object> plan) {
         return execute(proposalId, plan);
     }
 
-    private QueryResult executeValidated(long proposalId, Map<String, Object> plan) {
+    private QueryResult executeValidated(long proposalId, Map<String, Object> plan, String configHash) {
         Map<String, Object> config = readiness.proposal(proposalId);
+        if (configHash != null && !configHash.equals(QueryConfigHash.of(json, config))) {
+            throw new IllegalArgumentException("查询配置已更新，请重新输入完整查询条件");
+        }
         policy.validatePlan(plan, config);
         Map<String, Object> proposal = repository.findProposal(proposalId);
         Object taskId = proposal.get("task_id");

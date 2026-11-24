@@ -51,23 +51,35 @@ public class QueryHistoryServiceImpl implements IQueryHistoryService {
     }
 
     @Override
+    public Map<String, Object> latest(String username, long proposalId, String sessionId) {
+        validateSession(username, proposalId, sessionId);
+        if (sessionId == null || sessionId.isEmpty()) return Collections.emptyMap();
+        List<QueryMessage> messages = historyMapper.selectMessages(username, proposalId, sessionId, Long.MAX_VALUE, 1);
+        return messages.isEmpty() ? Collections.emptyMap() : readMessage(messages.get(0));
+    }
+
+    @Override
     public Map<String, Object> messages(String username, long proposalId, String sessionId, Long beforeId) {
         if (sessionId == null || sessionId.isEmpty()) throw new IllegalArgumentException("会话编号不能为空");
         validateSession(username, proposalId, sessionId);
         List<Map<String, Object>> messages = new ArrayList<>();
         for (QueryMessage row : historyMapper.selectMessages(username, proposalId, sessionId, beforeId == null ? Long.MAX_VALUE : beforeId, PAGE_SIZE + 1)) {
-            try {
-                Map<String, Object> message = json.readValue(row.getContent(), new TypeReference<Map<String, Object>>() {});
-                message.put("messageId", row.getMessageId());
-                message.put("createdAt", row.getCreateTime() == null ? null : row.getCreateTime().getTime());
-                messages.add(message);
-            } catch (Exception failure) {
-                throw new IllegalStateException("历史消息读取失败", failure);
-            }
+            messages.add(readMessage(row));
         }
         Map<String, Object> result = page(messages);
         Collections.reverse((List<?>) result.get("items"));
         return result;
+    }
+
+    private Map<String, Object> readMessage(QueryMessage row) {
+        try {
+            Map<String, Object> message = json.readValue(row.getContent(), new TypeReference<Map<String, Object>>() {});
+            message.put("messageId", row.getMessageId());
+            message.put("createdAt", row.getCreateTime() == null ? null : row.getCreateTime().getTime());
+            return message;
+        } catch (Exception failure) {
+            throw new IllegalStateException("历史消息读取失败", failure);
+        }
     }
 
     @Override
