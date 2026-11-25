@@ -1,0 +1,1 @@
+{"timestamp": "2026-11-25T01:23:21.482555+00:00", "command": "health", "env": "prod", "success": false, "args": {"env": "prod"}, "error": "找不到环境配置文件: /Users/quxuegang/Desktop/综合/曲雪刚/ontology-wiki/.gfb/envs/prod/.env"}

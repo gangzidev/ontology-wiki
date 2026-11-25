@@ -1,0 +1,16 @@
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-core/src/test/java/com/ontologywiki/ontology/service/LlmWikiClientIntegrationSmoke.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-core/src/test/java/com/ontologywiki/ontology/mapper/MapperXmlLoadTest.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-core/src/test/java/com/ontologywiki/ontology/controller/OntologyProposalListFilterTest.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-core/src/test/java/com/ontologywiki/ontology/service/OntologySemanticNamingServiceTest.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-core/src/test/java/com/ontologywiki/ontology/service/OntologyGenerationEngineQualityTest.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-core/src/test/java/com/ontologywiki/ontology/controller/OntologyControllerLlmMergeTest.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-core/src/test/java/com/ontologywiki/ontology/service/OntologyGenerationEngineSmoke.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-core/src/test/java/com/ontologywiki/ontology/service/OntologyRelationInferenceTest.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-core/src/test/java/com/ontologywiki/ontology/service/ExternalOntologyConfigAdapterTest.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-core/src/test/java/com/ontologywiki/ontology/service/OntologyArtifactExporterTest.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-core/src/test/java/com/ontologywiki/ontology/controller/OntologyAnalysisScopeTest.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-core/src/test/java/com/ontologywiki/ontology/service/analysis/OntologyProposalSemanticValidationTest.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-core/src/test/java/com/ontologywiki/ontology/service/wiki/WikiRelationServiceReadTest.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-core/src/test/java/com/ontologywiki/ontology/service/LlmWikiSettingsTest.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-core/src/test/java/com/ontologywiki/ontology/service/analysis/ProposalChangeServiceTest.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-core/src/test/java/com/ontologywiki/ontology/service/WikiLexicalRetrieverTest.java

@@ -89,6 +89,12 @@
         <if test="before != null">and r.run_id &lt; #{before}</if>
         order by r.run_id desc limit #{limit}
     </select>
+    <select id="selectRunById" resultMap="RunResult">
+        select r.run_id, r.run_token, r.run_kind, r.source_id, r.wiki_space_id, r.selection_json, r.username, r.started_at,
+            r.finished_at, r.status, r.stage, r.model_calls, r.proposal_id
+        from ontology_analysis_run r
+        where r.task_id = #{taskId} and r.run_id = #{runId}
+    </select>
     <resultMap id="StageTimingResult" type="java.util.LinkedHashMap">
         <id property="timingId" column="timing_id" javaType="java.lang.Long"/>
         <result property="stage" column="stage"/>

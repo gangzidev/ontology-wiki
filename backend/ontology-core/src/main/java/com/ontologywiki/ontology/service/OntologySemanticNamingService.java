@@ -16,8 +16,8 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 
 public class OntologySemanticNamingService {
-    private static final int BATCH_SIZE = 24;
-    private static final int BATCH_CHARACTERS = 16000;
+    private static final int BATCH_SIZE = 150;  // 从60增加到150，大幅减少批次数量
+    private static final int BATCH_CHARACTERS = 80000;  // 从32000增加到80000，支持更大批次
     private static final List<String> CATEGORIES = Arrays.asList("objects", "properties", "metrics", "dimensions", "timeDimensions");
     private final ObjectMapper json = new ObjectMapper();
 
@@ -42,28 +42,35 @@ public class OntologySemanticNamingService {
         report.put("source", "LLM");
         report.put("requests", 0);
         report.put("failedRequests", 0);
+
+        // 优化：不按对象分组，而是全局批次处理，大幅减少模型调用次数
         for (boolean semantics : Arrays.asList(false, true)) {
-            Map<String, List<Target>> groups = new LinkedHashMap<>();
+            List<Target> filteredTargets = new ArrayList<>();
             for (Target target : targets) {
-                if (target.isSemantic() != semantics) continue;
-                String objectId = target.object == null ? "unmapped" : text(target.object.get("id"));
-                groups.computeIfAbsent(objectId, key -> new ArrayList<>()).add(target);
-            }
-            for (List<Target> group : groups.values()) {
-                List<Target> batch = new ArrayList<>();
-                int characters = 0;
-                for (Target target : group) {
-                    int size = serialize(target.input()).length();
-                    if (!batch.isEmpty() && (batch.size() >= BATCH_SIZE || characters + size > BATCH_CHARACTERS)) {
-                        nameBatch(batch, businessContext, completion, progress, report);
-                        batch = new ArrayList<>();
-                        characters = 0;
-                    }
-                    batch.add(target);
-                    characters += size;
+                if (target.isSemantic() == semantics) {
+                    filteredTargets.add(target);
                 }
-                if (!batch.isEmpty()) nameBatch(batch, businessContext, completion, progress, report);
             }
+
+            // 计算总批次数（用于进度提示）
+            int estimatedBatches = estimateBatchCount(filteredTargets);
+            report.put("estimatedBatches", estimatedBatches);
+            report.put("currentBatch", 0);
+
+            // 全局批次处理，不再按对象分组
+            List<Target> batch = new ArrayList<>();
+            int characters = 0;
+            for (Target target : filteredTargets) {
+                int size = serialize(target.input()).length();
+                if (!batch.isEmpty() && (batch.size() >= BATCH_SIZE || characters + size > BATCH_CHARACTERS)) {
+                    nameBatch(batch, businessContext, completion, progress, report);
+                    batch = new ArrayList<>();
+                    characters = 0;
+                }
+                batch.add(target);
+                characters += size;
+            }
+            if (!batch.isEmpty()) nameBatch(batch, businessContext, completion, progress, report);
         }
         Map<String, Object> coverage = new LinkedHashMap<>();
         int named = 0, needsConfirmation = 0;
@@ -112,9 +119,24 @@ public class OntologySemanticNamingService {
     private void nameBatch(List<Target> batch, String context, Function<String, String> completion,
                            Consumer<String> progress, Map<String, Object> report) {
         List<Target> pending = new ArrayList<>(batch);
+        int currentBatch = ((Number) report.get("currentBatch")).intValue() + 1;
+        int estimatedBatches = ((Number) report.getOrDefault("estimatedBatches", 1)).intValue();
+        report.put("currentBatch", currentBatch);
+
         for (int attempt = 0; attempt < 2 && !pending.isEmpty(); attempt++) {
             increment(report, "requests");
-            progress.accept("3/4 正在用模型理解中文业务名称，第 " + report.get("requests") + " 批（" + pending.size() + " 项" + (attempt > 0 ? "，补全缺失项" : "") + "）…");
+
+            // 更详细的批次进度提示
+            String batchInfo = estimatedBatches > 1
+                ? String.format("批次 %d/%d（本批 %d 项）", currentBatch, estimatedBatches, pending.size())
+                : String.format("（%d 项）", pending.size());
+
+            if (attempt > 0) {
+                progress.accept("3/4 正在补全缺失项，" + batchInfo + "…");
+            } else {
+                progress.accept("3/4 正在调用模型补全中文名称，" + batchInfo + "…");
+            }
+
             try {
                 String answer = completion.apply(prompt(pending, context));
                 Map<String, JsonNode> returned = parse(answer);
@@ -127,8 +149,31 @@ public class OntologySemanticNamingService {
             } catch (RuntimeException failure) {
                 increment(report, "failedRequests");
             }
+
+            int beforeRemove = pending.size();
             pending.removeIf(target -> target.accepted);
+            int completed = beforeRemove - pending.size();
+
+            // 批次完成提示
+            if (attempt == 0 && completed > 0) {
+                progress.accept(String.format("批次 %d/%d 完成，成功补全 %d 项", currentBatch, estimatedBatches, completed));
+            }
         }
+    }
+
+    private int estimateBatchCount(List<Target> targets) {
+        if (targets.isEmpty()) return 0;
+
+        int totalSize = 0;
+        for (Target target : targets) {
+            totalSize += serialize(target.input()).length();
+        }
+
+        // 估算需要多少批次（考虑批次大小和字符限制）
+        int batchesBySize = (targets.size() + BATCH_SIZE - 1) / BATCH_SIZE;
+        int batchesByChars = (totalSize + BATCH_CHARACTERS - 1) / BATCH_CHARACTERS;
+
+        return Math.max(batchesBySize, batchesByChars);
     }
 
     private String prompt(List<Target> batch, String context) {

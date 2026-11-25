@@ -16,34 +16,6 @@ public class QueryResultExplainer {
         if (plan.get("timeGranularity") != null) explanation.put("timeGranularity", plan.get("timeGranularity"));
         if (plan.get("orderBy") != null) explanation.put("orderBy", plan.get("orderBy"));
         explanation.put("sourceObjects", objectIds);
-        Map<String, Map<String, Object>> objectsById = index(rows(config.get("objects")));
-        List<Map<String, Object>> sourceDetails = new ArrayList<>();
-        for (String objectId : objectIds) {
-            Map<String, Object> object = objectsById.get(objectId);
-            if (object == null) continue;
-            Map<String, Object> detail = new LinkedHashMap<>();
-            for (String key : Arrays.asList("id", "name", "schema", "table")) if (object.containsKey(key)) detail.put(key, object.get(key));
-            sourceDetails.add(detail);
-        }
-        explanation.put("sourceDetails", sourceDetails);
-        Set<String> sourceIds = new LinkedHashSet<>(objectIds);
-        List<Map<String, Object>> relations = rows(semantics == null ? null : semantics.get("relations"));
-        if (relations.isEmpty()) relations = rows(config.get("relations"));
-        List<Map<String, Object>> related = new ArrayList<>();
-        for (Map<String, Object> relation : relations) {
-            if (!sourceIds.contains(String.valueOf(relation.get("sourceObjectId")))
-                    || !sourceIds.contains(String.valueOf(relation.get("targetObjectId")))) continue;
-            Map<String, Object> item = new LinkedHashMap<>();
-            for (String key : Arrays.asList("id", "sourceObjectId", "targetObjectId", "sourceColumn", "targetColumn",
-                    "sourceKeyColumn", "targetKeyColumn", "viaObjectId", "viaTable", "viaSourceColumn", "viaTargetColumn",
-                    "cardinality", "inferenceMethod", "evidence", "reviewRequired")) {
-                if (relation.containsKey(key)) item.put(key, relation.get(key));
-            }
-            addObjectLabel(item, "source", objectsById.get(String.valueOf(relation.get("sourceObjectId"))));
-            addObjectLabel(item, "target", objectsById.get(String.valueOf(relation.get("targetObjectId"))));
-            related.add(item);
-        }
-        explanation.put("sourceRelations", related);
         if (plan.get("detailObjectId") != null) {
             String objectId = String.valueOf(plan.get("detailObjectId"));
             for (Map<String, Object> object : rows(config.get("objects"))) if (objectId.equals(String.valueOf(object.get("id")))) {
@@ -77,15 +49,4 @@ public class QueryResultExplainer {
         return result;
     }
     private Map<String, Object> mergedSemantics(Map<String, Object> config) { return SemanticCatalog.from(config); }
-    private Map<String, Map<String, Object>> index(List<Map<String, Object>> rows) {
-        Map<String, Map<String, Object>> result = new LinkedHashMap<>();
-        for (Map<String, Object> row : rows) result.put(String.valueOf(row.get("id")), row);
-        return result;
-    }
-    private void addObjectLabel(Map<String, Object> relation, String prefix, Map<String, Object> object) {
-        if (object == null) return;
-        relation.put(prefix + "Name", object.get("name"));
-        relation.put(prefix + "Table", object.get("table"));
-        relation.put(prefix + "Schema", object.get("schema"));
-    }
 }

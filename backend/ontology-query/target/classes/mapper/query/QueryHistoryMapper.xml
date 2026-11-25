@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ontologywiki.query.mapper.QueryHistoryMapper">
+    <resultMap id="SessionResult" type="com.ontologywiki.query.domain.QuerySession">
+        <id property="sessionId" column="session_id" />
+        <result property="title" column="title" />
+        <result property="updateTime" column="update_time" />
+    </resultMap>
+    <resultMap id="MessageResult" type="com.ontologywiki.query.domain.QueryMessage">
+        <id property="messageId" column="message_id" />
+        <result property="content" column="content" />
+        <result property="createTime" column="create_time" />
+    </resultMap>
+    <select id="countSession" resultType="int">
+        select count(*) from wiki_chat_session
+        where session_id = #{sessionId} and created_by = #{username}
+          and scope_type = 'DATA_QUERY' and scope_id = #{proposalId}
+    </select>
+    <select id="selectSessions" resultMap="SessionResult">
+        select session_id, title, update_time from wiki_chat_session
+        where created_by = #{username} and scope_type = 'DATA_QUERY' and scope_id = #{proposalId}
+        order by update_time desc, session_id desc
+        limit #{limit} offset #{offset}
+    </select>
+    <select id="selectMessages" resultMap="MessageResult">
+        select message.message_id, message.content, message.create_time
+        from wiki_chat_message message
+        inner join wiki_chat_session session on session.session_id = message.session_id
+            and session.created_by = message.created_by
+        where message.session_id = #{sessionId} and message.created_by = #{username}
+          and session.scope_type = 'DATA_QUERY' and session.scope_id = #{proposalId}
+          and message.role = 'assistant' and message.message_id &lt; #{beforeId}
+        order by message.message_id desc
+        limit #{limit}
+    </select>
+    <insert id="insertSession" parameterType="com.ontologywiki.query.domain.QuerySession">
+        insert into wiki_chat_session
+            (session_id, scope_type, scope_id, title, created_by, create_time, update_time)
+        values
+            (#{sessionId}, 'DATA_QUERY', #{proposalId}, #{title}, #{createdBy}, current_timestamp, current_timestamp)
+    </insert>
+    <insert id="insertMessage" parameterType="com.ontologywiki.query.domain.QueryMessage">
+        insert into wiki_chat_message (session_id, role, content, created_by, create_time)
+        values (#{sessionId}, 'assistant', #{content}, #{createdBy}, current_timestamp)
+    </insert>
+    <update id="touchSession">
+        update wiki_chat_session set update_time = current_timestamp
+        where session_id = #{sessionId} and created_by = #{username}
+          and scope_type = 'DATA_QUERY' and scope_id = #{proposalId}
+    </update>
+</mapper>

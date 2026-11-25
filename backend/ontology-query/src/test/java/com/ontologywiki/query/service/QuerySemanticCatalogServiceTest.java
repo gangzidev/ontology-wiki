@@ -9,7 +9,7 @@ import java.util.*;
 
 public class QuerySemanticCatalogServiceTest {
     @Test
-    public void resultExplanationContainsOnlyActualSourceRelations() {
+    public void resultExplanationKeepsSourceObjectsWithoutRelationshipBasis() {
         Map<String, Object> config = row("objects", Arrays.asList(
                         row("id", "orders", "name", "订单", "table", "sales_order"),
                         row("id", "stores", "name", "门店", "table", "store"),
@@ -20,11 +20,9 @@ public class QuerySemanticCatalogServiceTest {
 
         Map<String, Object> explanation = new QueryResultExplainer().explain(Collections.emptyMap(), config, Arrays.asList("orders", "stores"));
 
-        Assert.assertEquals(2, ((List<?>) explanation.get("sourceDetails")).size());
-        List<?> relations = (List<?>) explanation.get("sourceRelations");
-        Assert.assertEquals(1, relations.size());
-        Assert.assertEquals("订单", ((Map<?, ?>) relations.get(0)).get("sourceName"));
-        Assert.assertEquals("外键", ((Map<?, ?>) relations.get(0)).get("evidence"));
+        Assert.assertEquals(Arrays.asList("orders", "stores"), explanation.get("sourceObjects"));
+        Assert.assertFalse(explanation.containsKey("sourceDetails"));
+        Assert.assertFalse(explanation.containsKey("sourceRelations"));
     }
 
     @Test
@@ -144,6 +142,22 @@ public class QuerySemanticCatalogServiceTest {
         Assert.assertEquals("orders", relations.get(0).get("sourceObjectId"));
         Assert.assertEquals("store_id", relations.get(0).get("sourceColumn"));
         Assert.assertEquals("id", relations.get(0).get("targetColumn"));
+        Assert.assertEquals("EXECUTABLE", relations.get(0).get("executionStatus"));
+    }
+
+    @Test
+    public void relationExecutionStatusRequiresReviewedCompleteMapping() {
+        Map<String, Object> config = row("objects", Arrays.asList(row("id", "users"), row("id", "teams")),
+                "relations", Arrays.asList(
+                        row("id", "pending", "sourceObjectId", "users", "targetObjectId", "teams",
+                                "sourceColumn", "team_id", "targetColumn", "id", "reviewRequired", true),
+                        row("id", "missing", "sourceObjectId", "users", "targetObjectId", "teams"),
+                        row("id", "unknown", "sourceObjectId", "users", "targetObjectId", "teams",
+                                "sourceColumn", "team_id", "targetColumn", "id", "status", "SOMETHING_NEW")));
+        List<Map<String, Object>> relations = (List<Map<String, Object>>) new QuerySemanticCatalogService().describe(config).get("relations");
+        Assert.assertEquals("PENDING_REVIEW", relations.get(0).get("executionStatus"));
+        Assert.assertEquals("UNEXECUTABLE", relations.get(1).get("executionStatus"));
+        Assert.assertEquals("PENDING_REVIEW", relations.get(2).get("executionStatus"));
     }
 
     @Test

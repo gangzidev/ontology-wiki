@@ -311,6 +311,7 @@ public class QueryPlannerService {
             plan = json.convertValue(node, new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() { });
             for (String key : plan.keySet()) if (!Arrays.asList("fields", "filters", "orderBy", "limit", "offset", "timeDimension", "timeRange").contains(key))
                 throw new IllegalArgumentException("明细解析包含不允许的字段：" + key);
+            normalizeDetailFields(plan, context);
             contextRetriever.validateReferences(plan, context);
             Set<String> available = index(rows(context.get("properties"))).keySet();
             for (Map<String, Object> field : rows(plan.get("fields"))) if (!available.contains(String.valueOf(field.get("id"))))
@@ -321,6 +322,26 @@ public class QueryPlannerService {
         plan.put("detailObjectId", resolution.getDetailObjectId());
         plan.putIfAbsent("limit", 100);
         return plan;
+    }
+
+    /** 将模型偶尔返回的单个字段值规范成计划要求的数组，并只接受目录中的字段。 */
+    private void normalizeDetailFields(Map<String, Object> plan, Map<String, Object> context) {
+        if (!plan.containsKey("fields") || plan.get("fields") instanceof List) return;
+        Object raw = plan.get("fields");
+        String requested = raw == null ? "" : String.valueOf(raw).trim();
+        if (requested.isEmpty()) {
+            plan.remove("fields");
+            return;
+        }
+        for (Map<String, Object> property : rows(context.get("properties"))) {
+            if (requested.equals(String.valueOf(property.get("id")))
+                    || requested.equalsIgnoreCase(String.valueOf(property.get("name")))
+                    || requested.equalsIgnoreCase(String.valueOf(property.get("column")))) {
+                plan.put("fields", Collections.singletonList(Collections.singletonMap("id", property.get("id"))));
+                return;
+            }
+        }
+        throw new IllegalArgumentException("展示字段必须来自当前对象的属性目录");
     }
 
     private QuerySemanticCatalogService.Resolution retrieveSemantics(Map<String, Object> config, String question,

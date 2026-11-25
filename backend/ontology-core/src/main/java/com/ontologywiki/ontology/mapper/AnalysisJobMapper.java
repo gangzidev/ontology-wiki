@@ -16,6 +16,7 @@ public interface AnalysisJobMapper {
     int insertStageTiming(Map<String,Object> timing);
     List<Map<String,Object>> selectRuns(@Param("taskId") long taskId, @Param("before") Long before,
                                        @Param("limit") int limit, @Param("now") long now);
+    Map<String,Object> selectRunById(@Param("taskId") long taskId, @Param("runId") long runId);
     List<Map<String,Object>> selectModelCalls(@Param("taskId") long taskId, @Param("runId") long runId);
     List<Map<String,Object>> selectStageTimings(@Param("taskId") long taskId, @Param("runId") long runId);
     int checkpoint(Map<String,Object> job);

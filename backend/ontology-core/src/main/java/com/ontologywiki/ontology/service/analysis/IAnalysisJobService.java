@@ -10,5 +10,6 @@ public interface IAnalysisJobService {
     Map<String,Object> history(long taskId, Long before, int limit);
     java.util.List<Map<String,Object>> modelCalls(long taskId, long runId);
     java.util.List<Map<String,Object>> stageTimings(long taskId, long runId);
+    java.util.List<Map<String,Object>> logs(long taskId, long runId);
     Map<String,Object> runtimeMetrics();
 }

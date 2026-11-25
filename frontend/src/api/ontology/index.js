@@ -21,6 +21,7 @@ export const getAnalysisJob = id => request({ url: `/ontology/analyses/${id}/job
 export const getAnalysisRuns = (id, params) => request({ url: `/ontology/analyses/${id}/runs`, method: 'get', params })
 export const getAnalysisModelCalls = (id, runId) => request({ url: `/ontology/analyses/${id}/runs/${runId}/model-calls`, method: 'get' })
 export const getAnalysisStageTimings = (id, runId) => request({ url: `/ontology/analyses/${id}/runs/${runId}/stage-timings`, method: 'get' })
+export const getAnalysisLogs = (id, runId) => request({ url: `/ontology/analyses/${id}/runs/${runId}/logs`, method: 'get' })
 export const cancelAnalysisJob = id => request({ url: `/ontology/analyses/${id}/cancel`, method: 'post' })
 export const resumeAnalysisJob = id => request({ url: `/ontology/analyses/${id}/resume`, method: 'post', timeout: 10000 })
 export const getLatestAnalysisResult = (id) => request({ url: `/ontology/analyses/${id}/latest-result`, method: 'get' })
@@ -45,6 +46,8 @@ export const evaluateDataQuery = (proposalId, benchmark) => request({ url: `/ont
 export const executeDataQuery = (proposalId, plan) => request({ url: `/ontology/data-query/execute/${proposalId}`, method: 'post', data: plan, timeout: 45000 })
 export const askDataQuery = (proposalId, question, sessionId, newQuestion) => request({ url: `/ontology/data-query/ask/${proposalId}`, method: 'post', data: { question, sessionId, newQuestion }, timeout: 120000 })
 export const getDataQueryCatalog = proposalId => request({ url: `/ontology/data-query/catalog/${proposalId}`, method: 'get' })
+// 显式实体查找与关系分组查询，服务端按草案白名单和配置哈希校验。
+export const queryEntityRelations = (proposalId, requestData) => request({ url: `/ontology/data-query/entity/${proposalId}`, method: 'post', data: requestData, timeout: 120000 })
 export const drilldownDataQuery = (proposalId, plan, sessionId, question) => request({ url: `/ontology/data-query/drilldown/${proposalId}`, method: 'post', data: { plan, sessionId, question }, timeout: 45000 })
 export const listDataQueryHistory = (proposalId, page = 1) => request({ url: `/ontology/data-query/history/${proposalId}`, method: 'get', params: { page } })
 export const getDataQueryHistory = (proposalId, sessionId, beforeId) => request({ url: `/ontology/data-query/history/${proposalId}/${sessionId}`, method: 'get', params: { beforeId } })

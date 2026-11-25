@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ontologywiki.query.mapper.QueryEvaluationMapper">
+    <select id="countPassed" resultType="int">
+        select count(*) from ontology_query_evaluation
+        where proposal_id = #{proposalId} and config_hash = #{configHash} and passed = 1
+    </select>
+    <insert id="saveEvaluation" parameterType="com.ontologywiki.query.domain.QueryEvaluation">
+        insert into ontology_query_evaluation
+            (proposal_id, config_hash, benchmark_version, passed, case_count, passed_count, detail, evaluated_by, evaluated_at)
+        values
+            (#{proposalId}, #{configHash}, #{benchmarkVersion}, #{passed}, #{caseCount}, #{passedCount}, #{detail}, #{evaluatedBy}, current_timestamp)
+        on duplicate key update
+            passed = values(passed), case_count = values(case_count), passed_count = values(passed_count),
+            detail = values(detail), evaluated_by = values(evaluated_by), evaluated_at = current_timestamp
+    </insert>
+</mapper>

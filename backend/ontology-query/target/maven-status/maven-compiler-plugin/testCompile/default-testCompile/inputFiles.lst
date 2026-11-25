@@ -1,0 +1,16 @@
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-query/src/test/java/com/ontologywiki/query/support/QueryMapperTestSupport.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-query/src/test/java/com/ontologywiki/query/service/QueryExecutionServiceTest.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-query/src/test/java/com/ontologywiki/query/service/DataQueryInitializationTest.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-query/src/test/java/com/ontologywiki/integration/WikiEvidenceMapperTest.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-query/src/test/java/com/ontologywiki/query/service/QuerySqlCompilerTest.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-query/src/test/java/com/ontologywiki/query/service/QuerySemanticCatalogServiceTest.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-query/src/test/java/com/ontologywiki/query/service/QueryChartHintServiceTest.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-query/src/test/java/com/ontologywiki/query/dao/JdbcBusinessQueryDaoTest.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-query/src/test/java/com/ontologywiki/query/planning/QueryPlannerFastPathTest.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-query/src/test/java/com/ontologywiki/query/service/QueryReadinessServiceTest.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-query/src/test/java/com/ontologywiki/query/QueryModuleWiringTest.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-query/src/test/java/com/ontologywiki/query/service/QueryHistoryServiceTest.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-query/src/test/java/com/ontologywiki/query/mapper/QueryPersistenceMapperTest.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-query/src/test/java/com/ontologywiki/integration/AnalysisServicesIntegrationTest.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-query/src/test/java/com/ontologywiki/query/QueryArchitectureTest.java
+/Users/quxuegang/Desktop/??/???/ontology-wiki/backend/ontology-query/src/test/java/com/ontologywiki/query/planning/QueryPlannerRetrievalTest.java

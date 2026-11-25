@@ -63,6 +63,28 @@ public class QuerySemanticCatalogService {
             addObjectLabel(entry, "source", objectsById.get(text(relation.get("sourceObjectId"))));
             addObjectLabel(entry, "target", objectsById.get(text(relation.get("targetObjectId"))));
             addObjectLabel(entry, "via", objectsById.get(text(relation.get("viaObjectId"))));
+            boolean reviewRequired = Boolean.TRUE.equals(relation.get("reviewRequired"))
+                    || "NEEDS_REVIEW".equalsIgnoreCase(text(relation.get("status")));
+            String status = text(relation.get("status")).toUpperCase(Locale.ROOT);
+            boolean explicitlyUnavailable = Arrays.asList("REJECTED", "DISABLED", "UNEXECUTABLE").contains(status);
+            boolean knownApproved = Arrays.asList("CONFIRMED", "APPROVED", "ACTIVE", "EXECUTABLE", "VERIFIED").contains(status);
+            boolean unknownStatus = !status.isEmpty() && !reviewRequired && !explicitlyUnavailable && !knownApproved;
+            boolean awaitingReview = reviewRequired || (!status.isEmpty() && !knownApproved && !explicitlyUnavailable);
+            boolean hasIntermediate = !text(relation.get("viaObjectId")).isEmpty()
+                    || !text(relation.get("viaTable")).isEmpty();
+            boolean mappingComplete = hasIntermediate
+                    ? !text(relation.get("sourceKeyColumn")).isEmpty()
+                        && !text(relation.get("targetKeyColumn")).isEmpty()
+                        && !text(relation.get("viaSourceColumn")).isEmpty()
+                        && !text(relation.get("viaTargetColumn")).isEmpty()
+                    : !text(relation.get("sourceColumn")).isEmpty()
+                        && !text(relation.get("targetColumn")).isEmpty();
+            // 只有审核通过且连接映射完整的关系，才向查询侧标记为可执行。
+            entry.put("executionStatus", awaitingReview ? "PENDING_REVIEW"
+                    : explicitlyUnavailable || unknownStatus || !mappingComplete ? "UNEXECUTABLE" : "EXECUTABLE");
+            if (!mappingComplete) entry.put("unavailableReason", "连接字段映射不完整");
+            else if (explicitlyUnavailable) entry.put("unavailableReason", "关系已禁用或拒绝");
+            if (relation.get("description") != null) entry.put("description", relation.get("description"));
             relationEntries.add(entry);
         }
         result.put("relations", relationEntries);

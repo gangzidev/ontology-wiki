@@ -14,6 +14,7 @@ import com.ontologywiki.query.service.IQueryExecutionService;
 import com.ontologywiki.query.service.IQueryHistoryService;
 import com.ontologywiki.query.validation.QueryPlanValidator;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.LinkedHashMap;
 import java.util.Collections;
@@ -110,6 +111,7 @@ public class DataQueryServiceImpl implements IDataQueryService {
     @SuppressWarnings("unchecked")
     private Map<String, Object> answer(long proposalId, String question, Map<String, Object> previous) {
         Object base = previous.get("plan");
+        // 统一通过 AI 规划器处理所有查询，包括实体关联查询
         Map<String, Object> planned = base instanceof Map
                 ? planner.followUp(proposalId, question, (Map<String, Object>) base, previous.get("configHash"))
                 : planner.plan(proposalId, question);
@@ -152,6 +154,8 @@ public class DataQueryServiceImpl implements IDataQueryService {
         QueryReadinessService.Readiness state = readiness.check(proposalId, proposal);
         Map<String, Object> config = readiness.proposal(proposal);
         Map<String, Object> result = catalog.describe(config);
+        // 仅返回实体查询白名单和预算，不暴露连接凭据或 SQL。
+        if (config.get("entityQueryPolicy") instanceof Map) result.put("entityQueryPolicy", config.get("entityQueryPolicy"));
         result.put("exampleQuestions", java.util.Collections.emptyList());
         if (state.isQueryEnabled() && proposal.get("task_id") instanceof Number) {
             Map<String,Object> source = repository.findTaskDatasource(((Number) proposal.get("task_id")).longValue());

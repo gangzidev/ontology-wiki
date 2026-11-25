@@ -334,6 +334,12 @@ public class OntologyController extends BaseController {
         return AjaxResult.success(analysisJobs.stageTimings(id, runId));
     }
 
+    @PreAuthorize("@ss.hasPermi('ontology:analyses:query')")
+    @GetMapping("/analyses/{id}/runs/{runId}/logs")
+    public AjaxResult analysisLogs(@PathVariable("id") long id, @PathVariable("runId") long runId) {
+        return AjaxResult.success(analysisJobs.logs(id, runId));
+    }
+
     @PreAuthorize("@ss.hasPermi('ontology:analyses:edit')")
     @PostMapping("/analyses/{id}/cancel")
     public AjaxResult cancelAnalysis(@PathVariable("id") long id) { return AjaxResult.success(analysisJobs.cancel(id, SecurityUtils.getUsername())); }

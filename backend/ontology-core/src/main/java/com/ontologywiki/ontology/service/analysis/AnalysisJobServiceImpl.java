@@ -40,6 +40,7 @@ public class AnalysisJobServiceImpl implements IAnalysisJobService {
     private final AnalysisRuntimeMetrics metrics = new AnalysisRuntimeMetrics();
     private final WikiChatMapper spaces;
     private final ProposalChangeService corrections;
+    private final AnalysisLogService logService;
     @Value("${ontology.analysis.max-model-calls:200}")
     private int maxModelCalls = 200;
     @Value("${ontology.analysis.max-duration-minutes:30}")
@@ -50,7 +51,8 @@ public class AnalysisJobServiceImpl implements IAnalysisJobService {
                                   OntologyGenerationEngine generation, OntologyAnalysisMapper analysisMapper,
                                   LlmWikiClient llmWiki, ObjectMapper json,
                                   @Qualifier("ontologyAnalysisExecutor") ThreadPoolTaskExecutor executor,
-                                  WikiChatMapper spaces, ProposalChangeService corrections) {
+                                  WikiChatMapper spaces, ProposalChangeService corrections,
+                                  AnalysisLogService logService) {
         this.jobs = jobs;
         this.knowledge = knowledge;
         this.enrichment = enrichment;
@@ -62,6 +64,7 @@ public class AnalysisJobServiceImpl implements IAnalysisJobService {
         this.executor = executor;
         this.spaces = spaces;
         this.corrections = corrections;
+        this.logService = logService;
     }
 
     @Override
@@ -114,6 +117,11 @@ public class AnalysisJobServiceImpl implements IAnalysisJobService {
     @Override
     public List<Map<String,Object>> stageTimings(long taskId, long runId) {
         return jobs.stageTimings(taskId, runId);
+    }
+
+    @Override
+    public List<Map<String,Object>> logs(long taskId, long runId) {
+        return jobs.logs(taskId, runId);
     }
 
     private Map<String, Object> submit(long taskId, Map<String, String> request, String username, boolean resume) {
@@ -201,19 +209,84 @@ public class AnalysisJobServiceImpl implements IAnalysisJobService {
 
     private <T> T measureStage(long taskId, String token, String stage,
                                AnalysisRuntimeMetrics.Timing metric, Supplier<T> operation) {
+        // 记录阶段开始日志
+        logService.info(taskId, token, "STAGE", stage, stageLabelChinese(stage) + "开始");
+
         long startedAt = System.currentTimeMillis();
         long startNanos = System.nanoTime();
         String failureType = null;
+        T result = null;
         try {
-            return operation.get();
+            result = operation.get();
+            return result;
         } catch (RuntimeException | Error failure) {
             failureType = failure.getClass().getSimpleName();
             throw failure;
         } finally {
             long elapsed = System.nanoTime() - startNanos;
+            long durationMillis = TimeUnit.NANOSECONDS.toMillis(elapsed);
             metric.record(elapsed, failureType == null);
-            recordStageTiming(taskId, token, stage, startedAt, TimeUnit.NANOSECONDS.toMillis(elapsed), failureType);
+            recordStageTiming(taskId, token, stage, startedAt, durationMillis, failureType);
+
+            // 记录阶段完成日志（带详细信息）
+            if (failureType == null) {
+                Map<String, Object> detail = extractStageDetail(stage, result);
+                logService.info(taskId, token, "STAGE", stage,
+                    stageLabelChinese(stage) + "完成 (" + durationMillis + "ms)", detail);
+            } else {
+                logService.error(taskId, token, "STAGE", stage,
+                    stageLabelChinese(stage) + "失败: " + failureType);
+            }
         }
+    }
+
+    private String stageLabelChinese(String stage) {
+        switch (stage) {
+            case "SCAN": return "数据源结构扫描";
+            case "WIKI_DOCUMENTS": return "Wiki文档检索";
+            case "BUSINESS_RULES": return "业务规则检索";
+            case "GENERATION": return "候选生成";
+            case "MODEL_ENRICHMENT": return "模型语义补充";
+            case "NAME_COMPLETION": return "中文名称补全";
+            default: return stage;
+        }
+    }
+
+    private Map<String, Object> extractStageDetail(String stage, Object result) {
+        Map<String, Object> detail = new LinkedHashMap<>();
+        try {
+            if ("SCAN".equals(stage) && result instanceof Map) {
+                Map<?, ?> scanned = (Map<?, ?>) result;
+                List<?> tables = (List<?>) scanned.get("tables");
+                if (tables != null) {
+                    detail.put("tableCount", tables.size());
+                    int totalColumns = 0;
+                    for (Object table : tables) {
+                        if (table instanceof Map) {
+                            List<?> columns = (List<?>) ((Map<?, ?>) table).get("columns");
+                            if (columns != null) totalColumns += columns.size();
+                        }
+                    }
+                    detail.put("columnCount", totalColumns);
+                }
+            } else if ("WIKI_DOCUMENTS".equals(stage) && result instanceof List) {
+                List<?> documents = (List<?>) result;
+                detail.put("documentCount", documents.size());
+            } else if ("BUSINESS_RULES".equals(stage) && result instanceof List) {
+                List<?> rules = (List<?>) result;
+                detail.put("ruleCount", rules.size());
+            } else if ("GENERATION".equals(stage) && result instanceof Map) {
+                Map<?, ?> generated = (Map<?, ?>) result;
+                List<?> objects = (List<?>) generated.get("objects");
+                List<?> properties = (List<?>) generated.get("properties");
+                if (objects != null) detail.put("objectCount", objects.size());
+                if (properties != null) detail.put("propertyCount", properties.size());
+            }
+        } catch (Exception e) {
+            // 提取详情失败不影响主流程
+            log.debug("Failed to extract stage detail for " + stage, e);
+        }
+        return detail;
     }
 
     private void recordStageTiming(long taskId, String token, String stage,
@@ -312,7 +385,8 @@ public class AnalysisJobServiceImpl implements IAnalysisJobService {
             };
             if ("GENERATED".equals(checkpoint.get("stage"))) {
                 measureStage(taskId, token, "MODEL_ENRICHMENT", metrics.modelEnrichment, () -> {
-                    enrichment.describe(config, map(checkpoint.get("schema")), text(checkpoint.get("context")), model);
+                    enrichment.describe(config, map(checkpoint.get("schema")), text(checkpoint.get("context")), model,
+                            message -> jobs.checkpoint(taskId, token, checkpoint, message, calls.get()));
                     return null;
                 });
                 checkpoint.put("stage", "DESCRIBED");

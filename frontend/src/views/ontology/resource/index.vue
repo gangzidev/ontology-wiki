@@ -34,8 +34,8 @@
       <el-pagination v-if="assetGraph.total > assetGraph.pageSize" :current-page.sync="assetGraphPage.pageNum" :page-size="assetGraphPage.pageSize" :total="assetGraph.total" layout="prev, pager, next, total" @current-change="loadAssetGraph" />
     </div>
     <el-table v-if="resource!=='assets' || assetView==='list'" v-loading="loading" :data="rows" border class="resource-table">
-      <el-table-column v-for="col in columns" :key="col.key" :prop="col.key" :label="col.key==='source_id' ? '数据源' : (col.key==='wiki_space_id' ? '行业知识空间' : (col.key==='review_by' ? '完成记录' : col.label))" min-width="130" show-overflow-tooltip><template slot-scope="s"><el-tag v-if="resource==='analyses' && col.key==='status'" size="mini" :type="analysisStatusType(s.row.status)">{{ analysisStatusText(s.row.status) }}</el-tag><el-tag v-else-if="resource==='proposals' && col.key==='status'" size="mini" :type="proposalStatusType(s.row.status)">{{ proposalStatusText(s.row.status) }}</el-tag><el-tag v-else-if="col.key==='status'" size="mini" :type="resourceStatusType(s.row.status)">{{ resourceStatusText(s.row.status) }}</el-tag><span v-else-if="resource==='proposals' && col.key==='proposal_type'">{{ proposalTypeText(s.row.proposal_type) }}</span><span v-else-if="resource==='proposals' && col.key==='review_by'">{{ s.row.review_by ? s.row.review_by + ' · ' + (s.row.review_time || '') : '尚未完成' }}</span><span v-else-if="resource==='assets' && col.key==='asset_type'"><el-tag size="mini" :type="s.row.asset_type==='WIKI_PAGE' ? 'success' : 'info'">{{ assetTypeText(s.row.asset_type) }}</el-tag></span><span v-else-if="resource==='datasources' && col.key==='db_type'">{{ datasourceTypeText(s.row.db_type) }}</span><span v-else>{{ col.key==='source_id' ? sourceName(s.row.source_id) : ((col.key==='space_id' || col.key==='wiki_space_id') ? spaceName(s.row[col.key]) : s.row[col.key]) }}</span></template></el-table-column>
-      <el-table-column label="操作" :width="actionWidth" fixed="right" class-name="action-cell"><template slot-scope="s"><el-button v-if="resource==='spaces'" v-hasPermi="['ontology:assets:list']" type="text" @click="openSpaceAssets(s.row)">查看资料</el-button><el-button v-if="resource==='spaces'" v-hasPermi="['ontology:dashboard:list']" type="text" @click="openScopedChat('SPACE',s.row.space_id)">行业问答</el-button><el-button v-if="resource==='assets'" v-hasPermi="[perm + ':query']" type="text" @click="viewAsset(s.row)">查看</el-button><el-button v-if="resource==='assets'" v-hasPermi="['ontology:dashboard:list']" type="text" @click="openScopedChat('ASSET',s.row.asset_id)">基于此资料问答</el-button><el-button v-if="resource==='assets' && s.row.asset_type!=='WIKI_PAGE' && s.row.asset_type!=='URL'" v-hasPermi="[perm + ':edit']" type="text" :disabled="!modelEnabled" :loading="String(ingestingAssetId) === String(s.row.asset_id)" :title="!modelEnabled ? '请先在「模型配置」中添加并启用模型' : ''" @click="ingest(s.row)">整理 Wiki</el-button><el-button v-if="resource==='datasources'" v-hasPermi="[perm + ':query']" type="text" @click="testSavedConnection(s.row)">测试连接</el-button><el-button v-if="resource==='datasources'" v-hasPermi="[perm + ':edit']" type="text" @click="credential(s.row)">设置密码</el-button><el-button v-if="resource==='datasources'" v-hasPermi="[perm + ':query']" type="text" @click="scan(s.row)">扫描</el-button><template v-if="resource==='analyses'"><el-button v-hasPermi="[perm + ':query']" type="text" @click="reopenAnalysisProgress(s.row)">查看进度</el-button><el-dropdown v-hasPermi="[perm + ':edit']" trigger="click" @command="handleAnalysisCommand($event,s.row)"><el-button type="text" aria-label="更多分析任务操作"><i class="el-icon-more" /></el-button><el-dropdown-menu slot="dropdown"><el-dropdown-item v-if="s.row.status!=='RUNNING'" command="reanalyze" :disabled="!modelEnabled">重新分析</el-dropdown-item><el-dropdown-item v-if="s.row.status!=='RUNNING'" command="edit">编辑</el-dropdown-item><el-dropdown-item command="delete">删除</el-dropdown-item></el-dropdown-menu></el-dropdown></template><template v-if="resource==='proposals'"><el-button v-hasPermi="[perm + ':query']" type="text" @click="viewProposal(s.row)">查看</el-button><el-button v-hasPermi="[perm + ':query']" type="text" @click="openProposalVersions(s.row)">版本列表</el-button><el-button v-if="s.row.status==='DRAFT'" v-hasPermi="[perm + ':edit']" type="text" @click="completeProposalRow(s.row)">草案完成</el-button><el-button v-hasPermi="[perm + ':query']" type="text" @click="downloadProposal(s.row,'rdf')">导出 RDF/OWL</el-button><el-dropdown trigger="click" @command="handleProposalCommand($event,s.row)"><el-button type="text" aria-label="更多草案操作"><i class="el-icon-more" /></el-button><el-dropdown-menu slot="dropdown"><el-dropdown-item v-hasPermi="[perm + ':query']" command="project">导出工程</el-dropdown-item><el-dropdown-item v-hasPermi="[perm + ':remove']" command="delete">删除</el-dropdown-item></el-dropdown-menu></el-dropdown></template><el-button v-if="!['analyses','proposals'].includes(resource)" v-hasPermi="[perm + ':edit']" type="text" @click="edit(s.row)">编辑</el-button><el-button v-if="!['analyses','proposals'].includes(resource)" v-hasPermi="[perm + ':remove']" type="text" @click="remove(s.row)">删除</el-button></template></el-table-column>
+      <el-table-column v-for="col in columns" :key="col.key" :prop="col.key" :label="col.key==='source_id' ? '数据源' : (col.key==='wiki_space_id' ? '行业知识空间' : (col.key==='review_by' ? '完成记录' : col.label))" :min-width="getColumnWidth(col.key)" :width="getColumnFixedWidth(col.key)" :align="getColumnAlign(col.key)" show-overflow-tooltip><template slot-scope="s"><el-tag v-if="resource==='analyses' && col.key==='status'" size="mini" :type="analysisStatusType(s.row.status)">{{ analysisStatusText(s.row.status) }}</el-tag><el-tag v-else-if="resource==='proposals' && col.key==='status'" size="mini" :type="proposalStatusType(s.row.status)">{{ proposalStatusText(s.row.status) }}</el-tag><el-tag v-else-if="col.key==='status'" size="mini" :type="resourceStatusType(s.row.status)">{{ resourceStatusText(s.row.status) }}</el-tag><span v-else-if="resource==='proposals' && col.key==='proposal_type'">{{ proposalTypeText(s.row.proposal_type) }}</span><span v-else-if="resource==='proposals' && col.key==='review_by'">{{ s.row.review_by ? s.row.review_by + ' · ' + (s.row.review_time || '') : '尚未完成' }}</span><span v-else-if="resource==='assets' && col.key==='asset_type'"><el-tag size="mini" :type="s.row.asset_type==='WIKI_PAGE' ? 'success' : 'info'">{{ assetTypeText(s.row.asset_type) }}</el-tag></span><span v-else-if="resource==='datasources' && col.key==='db_type'">{{ datasourceTypeText(s.row.db_type) }}</span><span v-else>{{ col.key==='source_id' ? sourceName(s.row.source_id) : ((col.key==='space_id' || col.key==='wiki_space_id') ? spaceName(s.row[col.key]) : s.row[col.key]) }}</span></template></el-table-column>
+      <el-table-column label="操作" :width="actionWidth" fixed="right" class-name="action-cell"><template slot-scope="s"><el-button v-if="resource==='spaces'" v-hasPermi="['ontology:assets:list']" type="text" @click="openSpaceAssets(s.row)">查看资料</el-button><el-button v-if="resource==='spaces'" v-hasPermi="['ontology:dashboard:list']" type="text" @click="openScopedChat('SPACE',s.row.space_id)">行业问答</el-button><el-button v-if="resource==='assets'" v-hasPermi="[perm + ':query']" type="text" @click="viewAsset(s.row)">查看</el-button><el-button v-if="resource==='assets'" v-hasPermi="['ontology:dashboard:list']" type="text" @click="openScopedChat('ASSET',s.row.asset_id)">基于此资料问答</el-button><el-button v-if="resource==='assets' && s.row.asset_type!=='WIKI_PAGE' && s.row.asset_type!=='URL'" v-hasPermi="[perm + ':edit']" type="text" :disabled="!modelEnabled" :loading="String(ingestingAssetId) === String(s.row.asset_id)" :title="!modelEnabled ? '请先在「模型配置」中添加并启用模型' : ''" @click="ingest(s.row)">整理 Wiki</el-button><el-button v-if="resource==='datasources'" v-hasPermi="[perm + ':query']" type="text" @click="testSavedConnection(s.row)">测试连接</el-button><el-button v-if="resource==='datasources'" v-hasPermi="[perm + ':edit']" type="text" @click="credential(s.row)">设置密码</el-button><el-button v-if="resource==='datasources'" v-hasPermi="[perm + ':query']" type="text" @click="scan(s.row)">扫描</el-button><template v-if="resource==='analyses'"><el-button v-if="['DRAFT','READY'].includes(s.row.status)" v-hasPermi="[perm + ':edit']" type="text" :disabled="!modelEnabled" @click="analyze(s.row)">立即执行</el-button><el-button v-if="['RUNNING','DONE','FAILED','CANCELLED','INTERRUPTED'].includes(s.row.status)" v-hasPermi="[perm + ':query']" type="text" @click="reopenAnalysisProgress(s.row)">查看进度</el-button><el-dropdown v-hasPermi="[perm + ':edit']" trigger="click" @command="handleAnalysisCommand($event,s.row)"><el-button type="text" aria-label="更多分析任务操作"><i class="el-icon-more" /></el-button><el-dropdown-menu slot="dropdown"><el-dropdown-item v-if="s.row.status!=='RUNNING'" command="reanalyze" :disabled="!modelEnabled">重新分析</el-dropdown-item><el-dropdown-item v-if="s.row.status!=='RUNNING'" command="edit">编辑</el-dropdown-item><el-dropdown-item command="delete">删除</el-dropdown-item></el-dropdown-menu></el-dropdown></template><template v-if="resource==='proposals'"><el-button v-hasPermi="[perm + ':query']" type="text" @click="viewProposal(s.row)">查看</el-button><el-button v-hasPermi="[perm + ':query']" type="text" @click="openProposalVersions(s.row)">版本列表</el-button><el-button v-if="s.row.status==='DRAFT'" v-hasPermi="[perm + ':edit']" type="text" @click="completeProposalRow(s.row)">草案完成</el-button><el-button v-hasPermi="[perm + ':query']" type="text" @click="downloadProposal(s.row,'rdf')">导出 RDF/OWL</el-button><el-dropdown trigger="click" @command="handleProposalCommand($event,s.row)"><el-button type="text" aria-label="更多草案操作"><i class="el-icon-more" /></el-button><el-dropdown-menu slot="dropdown"><el-dropdown-item v-hasPermi="[perm + ':query']" command="project">导出工程</el-dropdown-item><el-dropdown-item v-hasPermi="[perm + ':remove']" command="delete">删除</el-dropdown-item></el-dropdown-menu></el-dropdown></template><el-button v-if="!['analyses','proposals'].includes(resource)" v-hasPermi="[perm + ':edit']" type="text" @click="edit(s.row)">编辑</el-button><el-button v-if="!['analyses','proposals'].includes(resource)" v-hasPermi="[perm + ':remove']" type="text" @click="remove(s.row)">删除</el-button></template></el-table-column>
     </el-table>
     <pagination v-show="total>0 && (resource!=='assets' || assetView==='list')" :total="total" :page.sync="query.pageNum" :limit.sync="query.pageSize" @pagination="load" />
     <el-dialog v-if="resource==='assets'" :title="form.id ? '编辑资料' : '新增资料'" :visible.sync="open" width="720px" append-to-body>
@@ -104,37 +104,178 @@
       <pagination v-show="proposalVersionTotal>0" :total="proposalVersionTotal" :page.sync="proposalVersionPage.pageNum" :limit.sync="proposalVersionPage.pageSize" @pagination="loadProposalVersions" />
       <span slot="footer"><el-button @click="proposalVersionsOpen=false">关闭</el-button></span>
     </el-dialog>
-    <el-dialog title="分析进度与执行记录" :visible.sync="analysisProgress.visible" width="860px" append-to-body :close-on-click-modal="false" :show-close="true" @close="refreshAnalysisListOnClose">
-      <el-alert v-if="analysisProgress.status==='RUNNING'" title="分析在后台进行，可关闭此窗口。任务完成后列表会更新状态，也可点击「查看进度」重新打开。" type="info" :closable="false" class="analysis-progress-tip" />
-      <div class="analysis-progress-current"><i v-if="analysisProgress.status==='RUNNING'" class="el-icon-loading"/><i v-else-if="analysisProgress.status==='DONE'" class="el-icon-circle-check"/><i v-else class="el-icon-circle-close"/><span>{{ analysisProgress.message }}</span><small>已用时 {{ analysisProgress.elapsedSeconds }} 秒</small></div>
-      <el-steps :active="Math.max((analysisProgress.step || 1)-1, 0)" finish-status="success" simple class="analysis-progress-steps">
-        <el-step title="读取数据库"/><el-step title="生成候选"/><el-step title="模型分析"/><el-step title="保存草案"/>
-      </el-steps>
-      <div class="analysis-progress-log"><div v-for="(item,index) in analysisProgress.logs" :key="index"><time>{{ item.time }}</time><span>{{ item.message }}</span></div></div>
-      <el-alert v-if="['FAILED','CANCELLED','INTERRUPTED'].includes(analysisProgress.status)" :title="analysisProgress.error || '分析失败，请检查数据源和模型服务状态。'" type="error" :closable="false" />
-      <analysis-run-history v-if="analysisProgress.taskId" ref="analysisRunHistory" embedded :task-id="analysisProgress.taskId" :visible="analysisProgress.visible" />
-      <span slot="footer"><el-button v-if="analysisProgress.status==='RUNNING'" type="danger" plain @click="cancelCurrentAnalysis">取消分析</el-button><el-button v-if="analysisProgress.resumable" type="primary" @click="resumeCurrentAnalysis">从检查点继续</el-button><el-button v-if="analysisProgress.status==='DONE'" type="primary" :disabled="!analysisResult.proposalConfig" @click="openAnalysisResult">查看分析结果</el-button><el-button @click="closeAnalysisProgress">{{ analysisProgress.status==='RUNNING' ? '关闭（后台继续）' : '关闭' }}</el-button></span>
+    <el-dialog title="分析进度" :visible.sync="analysisProgress.visible" width="920px" append-to-body :close-on-click-modal="false" :show-close="true" @close="refreshAnalysisListOnClose">
+      <!-- 顶部状态栏 -->
+      <div class="progress-status-bar">
+        <div class="status-main">
+          <i v-if="analysisProgress.status==='RUNNING'" class="el-icon-loading status-icon running"/>
+          <i v-else-if="analysisProgress.status==='DONE'" class="el-icon-circle-check status-icon success"/>
+          <i v-else class="el-icon-circle-close status-icon error"/>
+          <div class="status-text">
+            <strong>{{ analysisProgress.message }}</strong>
+            <span>{{ analysisProgress.taskName || '分析任务' }}</span>
+          </div>
+        </div>
+        <div class="status-stats">
+          <div class="stat-item">
+            <i class="el-icon-timer"></i>
+            <span>{{ analysisProgress.elapsedSeconds }}s</span>
+          </div>
+          <div class="stat-item">
+            <i class="el-icon-connection"></i>
+            <span>{{ analysisProgress.modelCalls || 0 }} 次调用</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 简化的进度条 -->
+      <div class="progress-steps-compact">
+        <div v-for="(step, index) in progressSteps" :key="index"
+             :class="['step-item', { active: analysisProgress.stepIndex > index, current: analysisProgress.stepIndex === index }]">
+          <div class="step-dot"></div>
+          <span class="step-label">{{ step }}</span>
+        </div>
+      </div>
+
+      <!-- 控制台日志 -->
+      <div class="console-log">
+        <div class="console-header">
+          <i class="el-icon-document"></i>
+          <span>执行日志</span>
+          <span class="console-hint">实时更新</span>
+        </div>
+        <div class="console-content" ref="consoleContent">
+          <div v-for="(item, index) in analysisProgress.logs" :key="index" class="log-line">
+            <span class="log-time">{{ item.time }}</span>
+            <span class="log-message">{{ item.message }}</span>
+          </div>
+          <div v-if="analysisProgress.logs.length === 0" class="log-empty">
+            等待分析任务启动...
+          </div>
+        </div>
+      </div>
+
+      <el-alert v-if="['FAILED','CANCELLED','INTERRUPTED'].includes(analysisProgress.status)" :title="analysisProgress.error || '分析失败，请检查数据源和模型服务状态。'" type="error" :closable="false" style="margin-top: 16px;" />
+
+      <span slot="footer">
+        <el-button v-if="analysisProgress.status==='RUNNING'" type="danger" plain @click="cancelCurrentAnalysis">取消分析</el-button>
+        <el-button v-if="analysisProgress.resumable" type="primary" @click="resumeCurrentAnalysis">从检查点继续</el-button>
+        <el-button v-if="analysisProgress.status==='DONE'" type="primary" :disabled="!analysisResult.proposalConfig" @click="openAnalysisResult">查看分析结果</el-button>
+        <el-button @click="closeAnalysisProgress">{{ analysisProgress.status==='RUNNING' ? '关闭（后台继续）' : '关闭' }}</el-button>
+      </span>
     </el-dialog>
-    <el-dialog title="选择数据库分析范围" :visible.sync="tablePicker.visible" width="860px" append-to-body :close-on-click-modal="false">
-      <el-alert title="勾选表后只读取选中表结构并生成候选。Schema 与表名共同标识对象，支持搜索和分页选择。样例最多每表20条，并按字段名脱敏；选择分析整个数据源时也会沿用当前样例条数。" type="info" :closable="false" style="margin-bottom:14px" />
-      <div class="table-picker-toolbar">
-        <el-input v-model="tablePicker.keyword" size="small" clearable placeholder="搜索表名、Schema 或注释" @keyup.enter.native="searchAnalysisTables" />
-        <el-button size="small" icon="el-icon-search" @click="searchAnalysisTables">搜索</el-button>
-        <span>匹配 {{ tablePicker.total }} 张，已选 {{ tablePicker.selectedKeys.length }} 张</span>
+    <el-dialog title="选择分析范围" :visible.sync="tablePicker.visible" width="980px" append-to-body :close-on-click-modal="false" class="table-picker-dialog">
+      <!-- 说明卡片 -->
+      <div class="picker-info-card">
+        <i class="el-icon-info picker-info-icon"></i>
+        <span class="picker-info-text">勾选需要分析的表，或选择分析整个数据源</span>
       </div>
-      <el-table v-loading="tablePicker.loading" :data="tablePicker.rows" border max-height="420">
-        <el-table-column label="选择" width="60" align="center"><template slot-scope="s"><el-checkbox :value="tablePicker.selectedKeys.includes(tableKey(s.row))" @change="toggleAnalysisTable(s.row, $event)" /></template></el-table-column>
-        <el-table-column label="Schema" prop="schema" width="180" show-overflow-tooltip />
-        <el-table-column label="表 / 视图" prop="name" min-width="220" show-overflow-tooltip />
-        <el-table-column label="类型" prop="type" width="100" />
-        <el-table-column label="注释" prop="comment" min-width="220" show-overflow-tooltip />
-      </el-table>
-      <div class="table-picker-footer">
-        <span>样例数据条数</span><el-input-number v-model="tablePicker.sampleLimit" size="small" :min="0" :max="20" />
-        <span class="form-tip">0 表示不读取业务样例；默认值来自数据源配置。</span>
-        <el-pagination :current-page.sync="tablePicker.pageNum" :page-size="tablePicker.pageSize" :total="tablePicker.total" layout="prev, pager, next, total" @current-change="loadAnalysisTables" />
+
+      <!-- 搜索栏 -->
+      <div class="picker-search-section">
+        <div class="picker-search-bar">
+          <i class="el-icon-search picker-search-icon"></i>
+          <el-input
+            v-model="tablePicker.keyword"
+            placeholder="搜索表名、Schema 或注释..."
+            class="picker-search-input"
+            @keyup.enter.native="searchAnalysisTables"
+          />
+          <el-button size="small" type="primary" @click="searchAnalysisTables">搜索</el-button>
+        </div>
+        <div class="picker-stats-bar">
+          <span class="picker-stat-item">
+            <i class="el-icon-document"></i>
+            匹配 <strong>{{ tablePicker.total }}</strong> 张表
+          </span>
+          <span class="picker-stat-item picker-selected">
+            <i class="el-icon-circle-check"></i>
+            已选 <strong>{{ tablePicker.selectedKeys.length }}</strong> 张
+          </span>
+        </div>
       </div>
-      <span slot="footer"><el-button @click="tablePicker.visible=false">取消</el-button><el-button :disabled="!tablePicker.selectedKeys.length" type="primary" @click="startSelectedAnalysis">分析选中表（{{ tablePicker.selectedKeys.length }}）</el-button><el-button v-if="tablePicker.mode!=='INCREMENTAL'" type="warning" plain @click="startAllTablesAnalysis">分析整个数据源</el-button></span>
+
+      <!-- 表格 -->
+      <div class="picker-table-wrapper">
+        <el-table
+          v-loading="tablePicker.loading"
+          :data="tablePicker.rows"
+          class="picker-table"
+          max-height="420"
+          :header-cell-style="{ background: '#fafafa', color: '#615d59', fontSize: '13px', fontWeight: '600' }"
+        >
+          <el-table-column width="50" align="center">
+            <template slot-scope="s">
+              <el-checkbox
+                :value="tablePicker.selectedKeys.includes(tableKey(s.row))"
+                @change="toggleAnalysisTable(s.row, $event)"
+              />
+            </template>
+          </el-table-column>
+          <el-table-column label="Schema" prop="schema" width="160" show-overflow-tooltip />
+          <el-table-column label="表 / 视图" prop="name" min-width="200" show-overflow-tooltip>
+            <template slot-scope="s">
+              <span class="table-name-cell">{{ s.row.name }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="类型" prop="type" width="90" align="center" />
+          <el-table-column label="注释" prop="comment" min-width="240" show-overflow-tooltip>
+            <template slot-scope="s">
+              <span class="table-comment-cell">{{ s.row.comment || '—' }}</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+
+      <!-- 分页和样例设置 -->
+      <div class="picker-footer-section">
+        <div class="picker-sample-config">
+          <span class="picker-sample-label">样例数据条数</span>
+          <el-input-number
+            v-model="tablePicker.sampleLimit"
+            size="small"
+            :min="0"
+            :max="20"
+            class="picker-sample-input"
+          />
+          <span class="picker-sample-hint">0 表示不读取业务样例</span>
+        </div>
+        <el-pagination
+          :current-page.sync="tablePicker.pageNum"
+          :page-size="tablePicker.pageSize"
+          :total="tablePicker.total"
+          layout="prev, pager, next"
+          class="picker-pagination"
+          @current-change="loadAnalysisTables"
+        />
+      </div>
+
+      <!-- 底部操作栏 -->
+      <span slot="footer" class="picker-actions">
+        <el-button
+          v-if="tablePicker.mode!=='INCREMENTAL'"
+          type="warning"
+          plain
+          @click="startAllTablesAnalysis"
+          class="picker-btn-all"
+        >
+          <i class="el-icon-files"></i>
+          分析整个数据源
+        </el-button>
+        <div class="picker-actions-right">
+          <el-button @click="tablePicker.visible=false" class="picker-btn-cancel">取消</el-button>
+          <el-button
+            :disabled="!tablePicker.selectedKeys.length"
+            type="primary"
+            @click="startSelectedAnalysis"
+            class="picker-btn-primary"
+          >
+            <i class="el-icon-data-analysis"></i>
+            分析选中的 {{ tablePicker.selectedKeys.length }} 张表
+          </el-button>
+        </div>
+      </span>
+    </el-dialog>
     </el-dialog>
     <el-dialog v-if="resource!=='assets'" :title="form.id ? '编辑' + title : '新增' + title" :visible.sync="open" width="720px" append-to-body>
       <el-alert v-if="resource==='analyses' && !datasourceOptions.length" title="请先在数据源管理中配置并测试数据源，再创建分析任务。" type="warning" :closable="false" style="margin-bottom:16px" />
@@ -278,7 +419,7 @@
             </el-table>
           </template>
         </el-tab-pane>
-        <el-tab-pane label="LLM Wiki 补充" name="llm">
+        <el-tab-pane v-if="false" label="LLM Wiki 补充" name="llm">
           <el-alert v-if="!analysisConfig.llmSuggestions" title="当前没有解析到结构化候选；请查看下方语义说明或补充 Wiki 业务资料后重新分析。" type="info" :closable="false"/>
           <div v-if="analysisConfig.llmSuggestions">
             <h4>对象候选</h4>
@@ -306,18 +447,27 @@
             </el-table>
           </div>
         </el-tab-pane>
-        <el-tab-pane label="校验与证据" name="validation">
+        <el-tab-pane label="质量检查" name="validation">
           <el-alert v-if="analysisConfig.consistencyReport" :title="analysisConfig.consistencyReport.isConsistent ? '结构一致性检查通过' : '发现结构一致性问题'" :type="analysisConfig.consistencyReport.isConsistent ? 'success' : 'error'" :closable="false"/>
+          <h4 style="margin: 20px 0 12px; color: #31302e; font-size: 14px; font-weight: 600;">质量告警</h4>
           <el-table :data="analysisConfig.warnings || []" max-height="220" border class="sub-table">
-            <el-table-column label="告警" width="180"><template slot-scope="s">{{ warningCodeText(s.row.code) }}</template></el-table-column>
-            <el-table-column label="对象 / 位置" min-width="180"><template slot-scope="s">{{ candidateReferenceName(s.row.ref) }}</template></el-table-column>
+            <el-table-column label="告警类型" width="180"><template slot-scope="s">{{ warningCodeText(s.row.code) }}</template></el-table-column>
+            <el-table-column label="相关对象" min-width="180"><template slot-scope="s">{{ candidateReferenceName(s.row.ref) }}</template></el-table-column>
             <el-table-column prop="message" label="说明" min-width="300"/>
           </el-table>
+          <div v-if="!analysisConfig.warnings || !analysisConfig.warnings.length" style="text-align: center; padding: 40px; color: #909399; font-size: 13px;">
+            暂无质量告警
+          </div>
+          <h4 style="margin: 20px 0 12px; color: #31302e; font-size: 14px; font-weight: 600;">分析依据</h4>
+          <p style="margin: 0 0 12px; color: #606266; font-size: 12px;">以下是本次分析所依据的数据来源和业务资料</p>
           <el-table :data="analysisConfig.evidence || []" max-height="220" border class="sub-table">
-            <el-table-column label="证据类型" width="160"><template slot-scope="s">{{ relationSourceLabel(s.row.type) }}</template></el-table-column>
+            <el-table-column label="依据类型" width="160"><template slot-scope="s">{{ relationSourceLabel(s.row.type) }}</template></el-table-column>
             <el-table-column label="来源" min-width="180"><template slot-scope="s">{{ candidateReferenceName(s.row.ref) }}</template></el-table-column>
             <el-table-column prop="description" label="说明" min-width="300"/>
           </el-table>
+          <div v-if="!analysisConfig.evidence || !analysisConfig.evidence.length" style="text-align: center; padding: 40px; color: #909399; font-size: 13px;">
+            暂无分析依据记录
+          </div>
         </el-tab-pane>
         <el-tab-pane label="候选图谱" name="graph"><div v-if="countOf(analysisConfig.objects)" ref="ontologyGraph" class="ontology-graph"/><el-empty v-else :image-size="72" description="当前草案没有可绘制的本体对象"/></el-tab-pane>
       </el-tabs>
@@ -330,25 +480,26 @@
   </div>
 </template>
 <script>
-import { listResource, getResource, getAssetGraph, rebuildAssetChunkIndex, addResource, updateResource, deleteResource, setDatasourceCredential, testDatasource, scanDatasource, listDatasourceTables, analyzeTask, getAnalysisJob, cancelAnalysisJob, resumeAnalysisJob, getLatestAnalysisResult, completeProposal, exportProposal, proposalDiff, rollbackProposal, ingestWikiAsset, getAnalysisContext } from '@/api/ontology'
+import { listResource, getResource, getAssetGraph, rebuildAssetChunkIndex, addResource, updateResource, deleteResource, setDatasourceCredential, testDatasource, scanDatasource, listDatasourceTables, analyzeTask, getAnalysisJob, cancelAnalysisJob, resumeAnalysisJob, getLatestAnalysisResult, completeProposal, exportProposal, proposalDiff, rollbackProposal, ingestWikiAsset, getAnalysisContext, getAnalysisRuns, getAnalysisModelCalls, getAnalysisStageTimings, getAnalysisLogs } from '@/api/ontology'
 import * as echarts from 'echarts'
 import OntologyQueryEvaluation from '@/components/OntologyQueryEvaluation'
-import AnalysisRunHistory from './AnalysisRunHistory'
+import AnalysisProgressView from './AnalysisProgressView'
 const configs = {
   spaces: { title: '行业知识空间', fields: [{ key: 'space_name', label: '行业 / 业务域名称', required: true }, { key: 'description', label: '说明', long: true }, { key: 'status', label: '状态', options: [{label:'正常',value:'0'},{label:'停用',value:'1'}] }] },
   assets: { title: 'Wiki资产', fields: [{ key: 'asset_name', label: '资料名称', required: true }, { key: 'space_id', label: '所属行业知识空间', required: true }, { key: 'asset_type', label: '资料类型', options: [{label:'文本',value:'TEXT'},{label:'文件',value:'FILE'}] }, { key: 'description', label: '备注' }] },
   datasources: { title: '数据源', fields: [{ key: 'name', label: '名称', required: true }, { key: 'db_type', label: '数据库类型', required: true }, { key: 'host', label: '主机地址' }, { key: 'port', label: '端口' }, { key: 'database_name', label: '数据库名' }, { key: 'schema_name', label: 'Schema' }, { key: 'jdbc_url', label: 'JDBC URL' }, { key: 'username', label: '用户名' }, { key: 'password', label: '数据库密码', secret: true, hidden: true, placeholder: '编辑已有数据源可留空，使用已保存密码' }, { key: 'sample_limit', label: '默认样例条数' }, { key: 'description', label: '说明', long: true }] },
-  analyses: { title: '分析任务', fields: [{ key: 'task_name', label: '任务名称', required: true }, { key: 'source_id', label: '关联数据源', required: true }, { key: 'wiki_space_id', label: '分析行业', required: true }, { key: 'scope', label: '业务目标说明', hidden: true, formHidden: true, long: true }, { key: 'status', label: '状态', formHidden: true, options: ['DRAFT','READY','RUNNING','DONE','FAILED'].map(x => ({ label:x, value:x })) }, { key: 'summary', label: '分析结论', formHidden: true, long: true }] },
+  analyses: { title: '分析任务', fields: [{ key: 'task_name', label: '任务名称', required: true }, { key: 'source_id', label: '关联数据源', required: true }, { key: 'wiki_space_id', label: '分析行业', required: true }, { key: 'scope', label: '业务目标说明', hidden: true, formHidden: true, long: true }, { key: 'status', label: '状态', formHidden: true, options: ['DRAFT','READY','RUNNING','DONE','FAILED'].map(x => ({ label:x, value:x })) }] },
   proposals: { title: '配置草案', fields: [{ key: 'proposal_name', label: '草案名称', required: true }, { key: 'proposal_type', label: '配置类型', required: true, options: [{label:'本体配置包',value:'ONTOLOGY_BUNDLE'},{label:'对象',value:'对象'},{label:'逻辑',value:'逻辑'},{label:'动作',value:'动作'},{label:'关系',value:'关系'}] }, { key: 'task_name', label: '来源分析任务', formHidden: true }, { key: 'task_id', label: '来源任务编号', formHidden: true, hidden: true }, { key: 'config_json', label: '配置JSON', long: true, json: true, hidden: true }, { key: 'status', label: '状态', formHidden: true }, { key: 'review_by', label: '审核人', formHidden: true }, { key: 'review_time', label: '审核时间', formHidden: true, hidden: true }, { key: 'review_comment', label: '审核意见', formHidden: true, hidden: true }] },
 }
 export default {
   name: 'OntologyResource',
-  components: { OntologyQueryEvaluation, AnalysisRunHistory },
-  data() { const raw = this.$route.path.split('/').filter(Boolean).pop(); const aliases={datasource:'datasources',analysis:'analyses',proposal:'proposals',space:'spaces',asset:'assets'}; const key = aliases[raw] || raw; const c = configs[key] || configs.assets; const ids={spaces:'space_id',assets:'asset_id',datasources:'datasource_id',analyses:'task_id',proposals:'proposal_id'}; const idLabels={spaces:'空间编号',assets:'资料编号',datasources:'数据源编号',analyses:'任务编号',proposals:'草案编号'}; return { resource: key, title: c.title, fields: c.fields, columns: [{key:ids[key],label:idLabels[key]}, ...c.fields.filter(f => !f.hidden)], rows:[], total:0, loading:false, testing:false, showSearch:true, open:false, tablePicker:{visible:false,loading:false,task:null,mode:'FULL',keyword:'',pageNum:1,pageSize:50,rows:[],total:0,selectedKeys:[],sampleLimit:0}, assetView:'list', assetGraphLoading:false, assetGraphPage:{pageNum:1,pageSize:50}, chunkIndexRebuilding:false, chunkIndexCursor:Number(sessionStorage.getItem('wikiAssetChunkCursor') || 0), chunkIndexProcessed:Number(sessionStorage.getItem('wikiAssetChunkProcessed') || 0), assetGraph:{nodes:[],edges:[],unresolved:[],total:0,pageSize:50}, assetGraphChart:null, ingestingAssetId:'', wikiIngestion:{ visible:false, status:'', asset:null, message:'' }, connectionMode:'host', jdbcUrlError:'', assetPreviewOpen:false, assetPreview:{}, wikiResultOpen:false, wikiResult:{}, analysisProgress:{ visible:false, status:'', step:1, message:'', elapsedSeconds:0, error:'', logs:[] }, analysisProgressTimer:null, analysisStartedAt:0, analysisOpen:false, analysisTab:'objects', analysisResult:{}, analysisConfig:{}, graphChart:null, proposalTaskName:'', highConfidenceOnly:false, proposalContext:null, diffOpen:false, diffLoading:false, diffInfo:{}, proposalVersionsOpen:false, proposalVersionsLoading:false, proposalVersions:[], proposalVersionTotal:0, proposalVersionTaskId:null, proposalVersionPage:{pageNum:1,pageSize:20}, datasourceOptions:[], spaceOptions:[], assetInputMode:'text', assetFileName:'', query:{ pageNum:1,pageSize:20,keyword:'',spaceId:undefined,taskId:undefined }, form:{}, rules:Object.fromEntries(c.fields.filter(f => f.required).map(f => [f.key,[{required:true,message:f.label+'不能为空',trigger:'blur'}]])) } },
+  components: { OntologyQueryEvaluation, AnalysisProgressView },
+  data() { const raw = this.$route.path.split('/').filter(Boolean).pop(); const aliases={datasource:'datasources',analysis:'analyses',proposal:'proposals',space:'spaces',asset:'assets'}; const key = aliases[raw] || raw; const c = configs[key] || configs.assets; const ids={spaces:'space_id',assets:'asset_id',datasources:'datasource_id',analyses:'task_id',proposals:'proposal_id'}; const idLabels={spaces:'空间编号',assets:'资料编号',datasources:'数据源编号',analyses:'任务编号',proposals:'草案编号'}; return { resource: key, title: c.title, fields: c.fields, columns: [{key:ids[key],label:idLabels[key]}, ...c.fields.filter(f => !f.hidden)], rows:[], total:0, loading:false, testing:false, showSearch:true, open:false, tablePicker:{visible:false,loading:false,task:null,mode:'FULL',keyword:'',pageNum:1,pageSize:50,rows:[],total:0,selectedKeys:[],sampleLimit:0}, assetView:'list', assetGraphLoading:false, assetGraphPage:{pageNum:1,pageSize:50}, chunkIndexRebuilding:false, chunkIndexCursor:Number(sessionStorage.getItem('wikiAssetChunkCursor') || 0), chunkIndexProcessed:Number(sessionStorage.getItem('wikiAssetChunkProcessed') || 0), assetGraph:{nodes:[],edges:[],unresolved:[],total:0,pageSize:50}, assetGraphChart:null, ingestingAssetId:'', wikiIngestion:{ visible:false, status:'', asset:null, message:'' }, connectionMode:'host', jdbcUrlError:'', assetPreviewOpen:false, assetPreview:{}, wikiResultOpen:false, wikiResult:{}, analysisProgress:{ visible:false, status:'', step:1, stepIndex:0, message:'', elapsedSeconds:0, error:'', logs:[], modelCalls:0, taskId:null, taskName:'', resumable:false }, analysisProgressTimer:null, analysisStartedAt:0, analysisPollId:0, analysisOpen:false, analysisTab:'objects', analysisResult:{}, analysisConfig:{}, graphChart:null, proposalTaskName:'', highConfidenceOnly:false, proposalContext:null, diffOpen:false, diffLoading:false, diffInfo:{}, proposalVersionsOpen:false, proposalVersionsLoading:false, proposalVersions:[], proposalVersionTotal:0, proposalVersionTaskId:null, proposalVersionPage:{pageNum:1,pageSize:20}, datasourceOptions:[], spaceOptions:[], assetInputMode:'text', assetFileName:'', query:{ pageNum:1,pageSize:20,keyword:'',spaceId:undefined,taskId:undefined }, form:{}, rules:Object.fromEntries(c.fields.filter(f => f.required).map(f => [f.key,[{required:true,message:f.label+'不能为空',trigger:'blur'}]])) } },
   filters: { shortText(value) { const text=String(value || ''); return text.length>100 ? text.slice(0,100)+'…' : text } },
   computed: {
     perm() { return 'ontology:' + this.resource },
     modelEnabled() { return this.$store.state.model.enabled },
+    progressSteps() { return ['扫描', '候选', '语义', '保存'] },
     /** 高置信优先筛选：confidence ≥ 0.6 视为高置信 */
     filteredObjects() {
       const items = this.analysisConfig.objects || []
@@ -361,6 +512,44 @@ export default {
     /** 操作列宽度按当前资源实际按钮数收缩，避免统一 740px 在按钮少的页面留下大片空白 */
     actionWidth() {
       return { spaces: 240, assets: 360, datasources: 300, analyses: 190, proposals: 390, imports: 120 }[this.resource] || 240
+    },
+    /** 获取列固定宽度 */
+    getColumnFixedWidth() {
+      return (key) => {
+        const widthMap = {
+          task_id: 100,
+          space_id: 100,
+          asset_id: 100,
+          datasource_id: 100,
+          proposal_id: 100,
+          status: 100
+        }
+        return widthMap[key]
+      }
+    },
+    /** 获取列最小宽度 */
+    getColumnWidth() {
+      return (key) => {
+        const widthMap = {
+          task_id: null,
+          space_id: null,
+          asset_id: null,
+          datasource_id: null,
+          proposal_id: null,
+          status: null,
+          task_name: 180,
+          source_id: 200,
+          wiki_space_id: 150
+        }
+        return widthMap[key] || 130
+      }
+    },
+    /** 获取列对齐方式 */
+    getColumnAlign() {
+      return (key) => {
+        const centerCols = ['task_id', 'space_id', 'asset_id', 'datasource_id', 'proposal_id', 'status']
+        return centerCols.includes(key) ? 'center' : 'left'
+      }
     }
   },
   watch: { analysisTab(value) { if (value === 'graph') this.$nextTick(this.renderGraph) }, assetView(value) { if (value === 'graph') this.loadAssetGraph() } },
@@ -530,27 +719,147 @@ export default {
       this.stopAnalysisProgress()
       this.analysisResult = {}
       this.analysisConfig = {}
-      this.analysisStartedAt = Date.now()
-      this.analysisProgress = { visible: true, status: 'RUNNING', step: 1, message: '1/4 正在加载分析任务进度…', elapsedSeconds: 0, error: '', logs: [], taskId, resumable: false, taskName: taskName || '', isReanalysis: !!isReanalysis }
-      this.addAnalysisProgressLog(this.analysisProgress.message)
-      const pollId = this.analysisPollId
+      this.analysisStartedAt = Date.now()  // 本地记录开始时间，用于实时计时
+      this.analysisProgress = {
+        visible: true,
+        status: 'RUNNING',
+        step: 1,
+        stepIndex: 0,
+        message: '正在初始化...',
+        elapsedSeconds: 0,
+        error: '',
+        logs: [],
+        taskId,
+        modelCalls: 0,
+        resumable: false,
+        taskName: taskName || '',
+        isReanalysis: !!isReanalysis
+      }
+
+      const pollId = ++this.analysisPollId
+      let lastLogId = 0  // 记录最后一条日志ID，用于增量加载
+      let databaseStartTime = null  // 数据库中的实际开始时间
+      let logEndpointAvailable = true
+
+      // 实时更新计时器（每秒更新一次）
+      const updateTimer = () => {
+        if (pollId !== this.analysisPollId) return
+        if (this.analysisProgress.status === 'RUNNING') {
+          const baseTime = databaseStartTime || this.analysisStartedAt
+          this.analysisProgress.elapsedSeconds = Math.floor((Date.now() - baseTime) / 1000)
+          setTimeout(updateTimer, 1000)
+        }
+      }
+      setTimeout(updateTimer, 1000)
+
       const poll = async () => {
         if (pollId !== this.analysisPollId) return
-        this.analysisProgress.elapsedSeconds = Math.floor((Date.now() - this.analysisStartedAt) / 1000)
+
         try {
           const { data } = await getAnalysisJob(taskId)
           if (pollId !== this.analysisPollId || !data) return
-          const message = data.message || data.summary || ''
-          const match = message.match(/^([1-4])\/4\s/)
+
           this.analysisProgress.resumable = !!data.resumable
-          if (match && message !== this.analysisProgress.message) {
-            this.analysisProgress.step = Number(match[1])
-            this.analysisProgress.message = message
-            this.addAnalysisProgressLog(message)
+          if (data.status === 'RUNNING' && data.message) {
+            this.analysisProgress.message = data.message
+            const match = String(data.message).match(/^([1-4])\/4\s/)
+            if (match) {
+              this.analysisProgress.step = Number(match[1])
+              this.analysisProgress.stepIndex = this.analysisProgress.step - 1
+            }
           }
+
+          // 实时增量加载数据库日志
+          try {
+            const { data: runs } = await getAnalysisRuns(taskId, { limit: 1 })
+            if (runs && runs.rows && runs.rows.length > 0) {
+              const latestRun = runs.rows[0]
+
+              // 记录数据库中的实际开始时间（用于精确计时）
+              if (latestRun.startedAt && !databaseStartTime) {
+                databaseStartTime = latestRun.startedAt
+              }
+
+              let dbLogs = null
+              if (logEndpointAvailable) {
+                try {
+                  const { data: logs } = await getAnalysisLogs(taskId, latestRun.runId)
+                  dbLogs = Array.isArray(logs) ? logs : []
+                } catch (error) {
+                  logEndpointAvailable = false
+                  console.warn('加载数据库日志失败，将使用阶段记录恢复日志:', error)
+                }
+              }
+
+              let calls = []
+              try {
+                const { data: modelCalls } = await getAnalysisModelCalls(taskId, latestRun.runId)
+                calls = Array.isArray(modelCalls) ? modelCalls : []
+              } catch (error) {
+                console.warn('加载模型调用记录失败:', error)
+              }
+              this.analysisProgress.modelCalls = Math.max(calls.length, Number(data.modelCalls) || 0)
+
+              let stages = []
+              try {
+                const { data: stageTimings } = await getAnalysisStageTimings(taskId, latestRun.runId)
+                stages = Array.isArray(stageTimings) ? stageTimings : []
+              } catch (error) {
+                console.warn('加载阶段耗时失败:', error)
+              }
+
+              // 增量加载详细日志；日志表不可用时从阶段记录恢复
+              if (dbLogs && dbLogs.length > 0) {
+                const newLogs = dbLogs.filter(log => Number(log.logId) > lastLogId)
+                if (newLogs.length > 0) {
+                  newLogs.forEach(log => {
+                    this.analysisProgress.logs.push({
+                      time: new Date(log.createdAt).toLocaleTimeString(),
+                      message: log.message,
+                      level: log.logLevel,
+                      category: log.logCategory
+                    })
+                  })
+                  lastLogId = newLogs[newLogs.length - 1].logId
+
+                  // 自动滚动到底部
+                  this.$nextTick(() => {
+                    const content = this.$refs.consoleContent
+                    if (content) content.scrollTop = content.scrollHeight
+                  })
+                }
+              } else {
+                await this.generateLogsFromTimings({ status: data.status }, latestRun, stages, calls)
+              }
+
+              // 根据阶段更新步骤进度
+              if (stages && stages.length > 0) {
+                const lastStage = stages[stages.length - 1]
+                const stageToStep = {
+                  'SCAN': 1,
+                  'WIKI_DOCUMENTS': 2,
+                  'BUSINESS_RULES': 2,
+                  'GENERATION': 2,
+                  'MODEL_ENRICHMENT': 3,
+                  'NAME_COMPLETION': 3
+                }
+                const stepNum = stageToStep[lastStage.stage] || 1
+                this.analysisProgress.step = stepNum
+                this.analysisProgress.stepIndex = stepNum - 1
+              }
+            }
+          } catch (error) {
+            console.warn('加载分析执行明细失败:', error)
+          }
+
+          if (data.status === 'RUNNING' && data.message) {
+            this.addAnalysisProgressLog(data.message)
+          }
+
           if (data.status === 'DONE') {
             this.analysisProgress.status = 'DONE'
             this.analysisProgress.step = 4
+            this.analysisProgress.stepIndex = 3
             this.analysisProgress.message = '分析完成，配置草案已保存'
             if (this.analysisProgress.isReanalysis) this.$modal.msgSuccess('新版本已经生成')
             this.analysisProgress.isReanalysis = false
@@ -560,28 +869,26 @@ export default {
               this.analysisResult = { isSavedProposal: true, taskId, taskName: this.analysisProgress.taskName, ...(result || {}) }
               this.analysisConfig = this.analysisResult.proposalConfig || {}
               this.analysisTab = 'objects'
-              this.addAnalysisProgressLog('配置草案 #' + (this.analysisResult.proposalId || '已保存'))
               this.trackAction('analysis_done')
             } catch (error) {
               if (pollId !== this.analysisPollId) return
               this.analysisProgress.message = '分析完成，结果读取失败，请打开配置草案查看'
             }
             this.stopAnalysisProgress()
-            if (this.$refs.analysisRunHistory) this.$refs.analysisRunHistory.load(false)
             this.load()
             return
           }
+
           if (['FAILED', 'CANCELLED', 'INTERRUPTED'].includes(data.status)) {
             this.analysisProgress.status = data.status
             this.analysisProgress.message = this.analysisStatusText(data.status)
-            this.analysisProgress.error = message || '请检查数据源和模型服务状态'
-            this.addAnalysisProgressLog(this.analysisProgress.error)
+            this.analysisProgress.error = data.message || '请检查数据源和模型服务状态'
             this.stopAnalysisProgress()
-            if (this.$refs.analysisRunHistory) this.$refs.analysisRunHistory.load(false)
             this.load()
             return
           }
-          this.analysisProgressTimer = setTimeout(poll, 1000)
+
+          this.analysisProgressTimer = setTimeout(poll, 1500)
         } catch (error) {
           if (pollId !== this.analysisPollId) return
           this.analysisProgress.status = 'FAILED'
@@ -589,7 +896,9 @@ export default {
           this.stopAnalysisProgress()
         }
       }
-      this.analysisProgressTimer = setTimeout(poll, 1000)
+
+      // 立即执行第一次轮询
+      poll()
     },
     cancelCurrentAnalysis() {
       const taskId = this.analysisProgress.taskId
@@ -616,9 +925,174 @@ export default {
       } catch (e) { /* 忽略 */ }
     },
     /** 重新打开已关闭的进度弹窗，继续轮询同一任务 */
-    reopenAnalysisProgress(row) {
-      if (this.analysisProgressTimer) { this.analysisProgress.visible=true; return }
-      this.startAnalysisProgress(row.task_id, row.task_name || '')
+    async reopenAnalysisProgress(row) {
+      if (row.status === 'RUNNING') {
+        this.startAnalysisProgress(row.task_id, row.task_name || '', false)
+        return
+      }
+
+      let currentStatus = row.status
+      let jobState = null
+      // 初始化进度状态（使用临时默认值）
+      this.analysisProgress = {
+        visible: true,
+        status: currentStatus,
+        step: 1,
+        stepIndex: 0,
+        message: currentStatus === 'DONE' ? '分析完成，配置草案已保存' : this.analysisStatusText(currentStatus),
+        elapsedSeconds: 0,
+        error: ['FAILED', 'CANCELLED', 'INTERRUPTED'].includes(currentStatus)
+          ? (row.summary || '任务未成功完成，请查看执行日志。')
+          : '',
+        logs: [],
+        modelCalls: 0,
+        taskId: row.task_id,
+        taskName: row.task_name || '',
+        resumable: false
+      }
+
+      try {
+        const { data } = await getAnalysisJob(row.task_id)
+        jobState = data || null
+        if (jobState) {
+          currentStatus = jobState.status || currentStatus
+          this.analysisProgress.status = currentStatus
+          this.analysisProgress.resumable = !!jobState.resumable
+          this.analysisProgress.modelCalls = Number(jobState.modelCalls) || 0
+          this.analysisProgress.message = currentStatus === 'DONE'
+            ? '分析完成，配置草案已保存'
+            : this.analysisStatusText(currentStatus)
+          this.analysisProgress.error = ['FAILED', 'CANCELLED', 'INTERRUPTED'].includes(currentStatus)
+            ? (jobState.message || row.summary || '任务未成功完成，请查看执行日志。')
+            : ''
+        }
+      } catch (error) {
+        console.warn('加载分析任务状态失败:', error)
+      }
+
+      if (currentStatus === 'RUNNING') {
+        this.startAnalysisProgress(row.task_id, row.task_name || '', false)
+        return
+      }
+
+      // 加载完整的执行状态和日志
+      try {
+        const { data: runs } = await getAnalysisRuns(row.task_id, { limit: 1 })
+        if (runs && runs.rows && runs.rows.length > 0) {
+          const latestRun = runs.rows[0]
+
+          // 1. 计算已运行时间
+          const startedAt = latestRun.startedAt
+          const finishedAt = latestRun.finishedAt || Date.now()
+          const elapsedMillis = finishedAt - startedAt
+          this.analysisProgress.elapsedSeconds = Math.floor(elapsedMillis / 1000)
+
+          // 2. 加载模型调用次数
+          const { data: calls } = await getAnalysisModelCalls(row.task_id, latestRun.runId)
+          this.analysisProgress.modelCalls = Math.max(calls ? calls.length : 0, Number(jobState && jobState.modelCalls) || 0)
+
+          // 3. 根据阶段计算步骤进度
+          const { data: stages } = await getAnalysisStageTimings(row.task_id, latestRun.runId)
+          if (stages && stages.length > 0) {
+            const lastStage = stages[stages.length - 1]
+            const stageToStep = {
+              'SCAN': 1,
+              'WIKI_DOCUMENTS': 2,
+              'BUSINESS_RULES': 2,
+              'GENERATION': 2,
+              'MODEL_ENRICHMENT': 3,
+              'NAME_COMPLETION': 3
+            }
+            const stepNum = stageToStep[lastStage.stage] || 1
+            this.analysisProgress.step = currentStatus === 'DONE' ? 4 : stepNum
+            this.analysisProgress.stepIndex = this.analysisProgress.step - 1
+          }
+
+          // 4. 加载详细日志
+          try {
+            const { data: dbLogs } = await getAnalysisLogs(row.task_id, latestRun.runId)
+            if (dbLogs && dbLogs.length > 0) {
+              this.analysisProgress.logs = dbLogs.map(log => ({
+                time: new Date(log.createdAt).toLocaleTimeString(),
+                message: log.message,
+                level: log.logLevel,
+                category: log.logCategory
+              }))
+            } else {
+              // 回退：从阶段和调用记录生成日志
+              await this.generateLogsFromTimings(Object.assign({}, row, { status: currentStatus, error: this.analysisProgress.error }), latestRun, stages, calls)
+            }
+          } catch (error) {
+            console.warn('加载数据库日志失败，回退到生成日志:', error)
+            await this.generateLogsFromTimings(Object.assign({}, row, { status: currentStatus, error: this.analysisProgress.error }), latestRun, stages, calls)
+          }
+        }
+      } catch (error) {
+        console.error('加载执行状态失败:', error)
+      }
+
+      if (currentStatus === 'FAILED' && this.analysisProgress.error) {
+        const failureLog = '分析失败：' + this.analysisProgress.error
+        if (!this.analysisProgress.logs.some(item => item.message === failureLog)) {
+          this.analysisProgress.logs.push({ time: new Date().toLocaleTimeString(), message: failureLog })
+        }
+      }
+
+      if (currentStatus === 'DONE') {
+        getLatestAnalysisResult(row.task_id).then(({ data }) => {
+          this.analysisResult = { isSavedProposal: true, taskId: row.task_id, taskName: row.task_name, ...(data || {}) }
+          this.analysisConfig = this.analysisResult.proposalConfig || {}
+        }).catch(() => {})
+      }
+    },
+    async generateLogsFromTimings(row, latestRun, stages, calls) {
+      // 从阶段时间和模型调用记录生成日志（兼容旧数据）
+      const logs = []
+      if (!stages || !stages.length) return
+
+      stages.forEach(stage => {
+        const startTime = new Date(stage.startedAt).toLocaleTimeString()
+        const endTime = stage.finishedAt ? new Date(stage.finishedAt).toLocaleTimeString() : ''
+        logs.push({ time: startTime, message: `${this.stageLabel(stage.stage)}开始` })
+
+        const stageCalls = calls.filter(c => c.stage === stage.stage)
+        stageCalls.forEach(call => {
+          const callTime = new Date(call.startedAt).toLocaleTimeString()
+          logs.push({ time: callTime, message: `正在调用模型，第 ${call.callNumber} 次...` })
+        })
+
+        if (stage.status === 'SUCCEEDED' && endTime) {
+          logs.push({ time: endTime, message: `${this.stageLabel(stage.stage)}完成 (${stage.durationMillis}ms)` })
+        } else if (stage.status === 'FAILED') {
+          logs.push({ time: endTime || startTime, message: `${this.stageLabel(stage.stage)}失败${stage.failureType ? '：' + stage.failureType : ''}` })
+        }
+      })
+
+      if (row.status === 'DONE') {
+        logs.push({ time: new Date(row.update_time || Date.now()).toLocaleTimeString(), message: '分析完成' })
+        logs.push({ time: new Date(row.update_time || Date.now()).toLocaleTimeString(), message: '配置草案已保存' })
+      } else if (['FAILED', 'CANCELLED', 'INTERRUPTED'].includes(row.status)) {
+        const message = row.status === 'FAILED' ? '分析失败：' + (row.error || '请查看任务错误信息') : this.analysisStatusText(row.status)
+        logs.push({ time: new Date(latestRun.finishedAt || Date.now()).toLocaleTimeString(), message })
+      }
+      this.analysisProgress.logs = logs
+    },
+    inferStep(status) {
+      return status === 'DONE' ? 4 : 1
+    },
+    inferStepIndex(status) {
+      return status === 'DONE' ? 3 : 0
+    },
+    stageLabel(stage) {
+      const labels = {
+        SCAN: '数据源结构扫描',
+        WIKI_DOCUMENTS: 'Wiki 文档检索',
+        BUSINESS_RULES: '业务规则检索',
+        GENERATION: '候选生成',
+        MODEL_ENRICHMENT: '模型语义补充',
+        NAME_COMPLETION: '中文名称补全'
+      }
+      return labels[stage] || stage
     },
     closeAnalysisProgress() { this.analysisProgress.visible=false },
     refreshAnalysisListOnClose() { if (this.analysisProgress.status === 'RUNNING') this.load() },
@@ -705,4 +1179,294 @@ export default {
   .asset-graph-note { align-items:flex-start; flex-direction:column; }
 }
 @media (prefers-reduced-motion:reduce) { .wiki-progress-track span { animation:none; transform:translateX(95%); } }
+
+/* ========== 表选择器弹窗 - Awesome Design 风格 ========== */
+.table-picker-dialog ::v-deep .el-dialog__header {
+  padding: 24px 32px 20px;
+  border-bottom: 1px solid rgba(0,0,0,0.06);
+}
+.table-picker-dialog ::v-deep .el-dialog__title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #31302e;
+  letter-spacing: -0.25px;
+}
+.table-picker-dialog ::v-deep .el-dialog__body {
+  padding: 0;
+  background: #fafafa;
+}
+.table-picker-dialog ::v-deep .el-dialog__footer {
+  padding: 20px 32px;
+  border-top: 1px solid rgba(0,0,0,0.06);
+  background: #fff;
+}
+
+/* 说明卡片 */
+.picker-info-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 20px 32px 20px;
+  padding: 12px 16px;
+  background: #fff;
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 8px;
+}
+.picker-info-icon {
+  color: #0075de;
+  font-size: 16px;
+  flex: none;
+}
+.picker-info-text {
+  font-size: 13px;
+  color: #615d59;
+  line-height: 1.5;
+}
+
+/* 搜索区域 */
+.picker-search-section {
+  padding: 0 32px 20px;
+}
+.picker-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 10px 14px;
+  background: #fff;
+  border: 1px solid rgba(0,0,0,0.1);
+  border-radius: 8px;
+  transition: all 0.2s;
+}
+.picker-search-bar:focus-within {
+  border-color: #0075de;
+  box-shadow: 0 0 0 3px rgba(0,117,222,0.1);
+}
+.picker-search-icon {
+  color: #a39e98;
+  font-size: 16px;
+}
+.picker-search-input {
+  flex: 1;
+  min-width: 0;
+}
+.picker-search-input ::v-deep .el-input__inner {
+  border: none;
+  padding: 0;
+  background: transparent;
+  font-size: 14px;
+  color: #31302e;
+}
+.picker-search-input ::v-deep .el-input__inner::placeholder {
+  color: #a39e98;
+}
+.picker-search-bar .el-button {
+  margin: 0;
+}
+
+/* 统计栏 */
+.picker-stats-bar {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 0 4px;
+}
+.picker-stat-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #615d59;
+}
+.picker-stat-item i {
+  color: #a39e98;
+  font-size: 14px;
+}
+.picker-stat-item strong {
+  color: #31302e;
+  font-weight: 600;
+}
+.picker-stat-item.picker-selected {
+  color: #0075de;
+}
+.picker-stat-item.picker-selected i {
+  color: #0075de;
+}
+.picker-stat-item.picker-selected strong {
+  color: #0075de;
+}
+
+/* 表格容器 */
+.picker-table-wrapper {
+  padding: 0 32px 20px;
+}
+.picker-table {
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+.picker-table ::v-deep .el-table__header {
+  background: #fafafa;
+}
+.picker-table ::v-deep .el-table__body-wrapper {
+  border-radius: 0 0 8px 8px;
+}
+.picker-table ::v-deep .el-table td,
+.picker-table ::v-deep .el-table th {
+  border-color: rgba(0,0,0,0.06);
+}
+.picker-table ::v-deep .el-table__row:hover > td {
+  background: #f6f9fc;
+}
+.picker-table ::v-deep .el-checkbox__inner {
+  border-radius: 4px;
+}
+.picker-table ::v-deep .el-checkbox__input.is-checked .el-checkbox__inner {
+  background-color: #0075de;
+  border-color: #0075de;
+}
+.table-name-cell {
+  font-weight: 500;
+  color: #31302e;
+}
+.table-comment-cell {
+  color: #615d59;
+  font-size: 13px;
+}
+
+/* 底部区域 */
+.picker-footer-section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 32px;
+  background: #fff;
+  border-top: 1px solid rgba(0,0,0,0.06);
+}
+.picker-sample-config {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.picker-sample-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #615d59;
+}
+.picker-sample-input {
+  width: 100px;
+}
+.picker-sample-hint {
+  font-size: 12px;
+  color: #a39e98;
+  margin-left: 8px;
+}
+.picker-pagination ::v-deep .el-pager li {
+  min-width: 32px;
+  height: 32px;
+  line-height: 32px;
+  border-radius: 6px;
+  color: #615d59;
+  font-weight: 500;
+}
+.picker-pagination ::v-deep .el-pager li.active {
+  background: #0075de;
+  color: #fff;
+}
+.picker-pagination ::v-deep .btn-prev,
+.picker-pagination ::v-deep .btn-next {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  color: #615d59;
+}
+
+/* 底部操作按钮 */
+.picker-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+.picker-actions-right {
+  display: flex;
+  gap: 10px;
+}
+.picker-btn-all {
+  background: #fff9e6;
+  border-color: #f5d97e;
+  color: #8a6d00;
+  font-weight: 600;
+}
+.picker-btn-all:hover {
+  background: #fff4cc;
+  border-color: #f0cc5a;
+  color: #8a6d00;
+}
+.picker-btn-all i {
+  margin-right: 6px;
+}
+.picker-btn-cancel {
+  color: #615d59;
+  border-color: rgba(0,0,0,0.1);
+}
+.picker-btn-cancel:hover {
+  color: #31302e;
+  border-color: rgba(0,0,0,0.2);
+  background: #fafafa;
+}
+.picker-btn-primary {
+  background: #0075de;
+  border-color: #0075de;
+  font-weight: 600;
+}
+.picker-btn-primary:hover {
+  background: #005bab;
+  border-color: #005bab;
+}
+.picker-btn-primary:active {
+  background: #004a8f;
+}
+.picker-btn-primary i {
+  margin-right: 6px;
+}
+
+/* 分析进度 - 控制台风格 */
+.progress-status-bar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 20px;margin-bottom:16px;border:1px solid #e4e7ed;border-radius:10px;background:linear-gradient(135deg,#f8fafc 0%,#ffffff 100%)}
+.status-main{display:flex;align-items:center;gap:14px;min-width:0}
+.status-icon{font-size:28px;flex:none}
+.status-icon.running{color:#0075de;animation:rotate 1.5s linear infinite}
+.status-icon.success{color:#67c23a}
+.status-icon.error{color:#f56c6c}
+@keyframes rotate{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+.status-text{min-width:0}
+.status-text strong{display:block;font-size:15px;font-weight:600;color:#31302e;margin-bottom:4px}
+.status-text span{font-size:12px;color:#8a95a3}
+.status-stats{display:flex;gap:20px;flex:none}
+.stat-item{display:flex;align-items:center;gap:6px;font-size:13px;color:#606266;white-space:nowrap}
+.stat-item i{color:#0075de;font-size:16px}
+.progress-steps-compact{display:flex;gap:8px;margin-bottom:16px;padding:12px 16px;background:#fafbfc;border:1px solid #e4e7ed;border-radius:8px}
+.step-item{display:flex;align-items:center;gap:8px;flex:1;position:relative}
+.step-item:not(:last-child)::after{content:'';position:absolute;right:-8px;top:50%;width:8px;height:2px;background:#dcdfe6;transform:translateY(-50%)}
+.step-dot{width:12px;height:12px;border-radius:50%;border:2px solid #dcdfe6;background:#fff;transition:all .3s}
+.step-label{font-size:12px;color:#909399;transition:all .3s}
+.step-item.active .step-dot{border-color:#67c23a;background:#67c23a}
+.step-item.active .step-label{color:#67c23a;font-weight:600}
+.step-item.current .step-dot{border-color:#0075de;background:#0075de;animation:pulse-dot 1.5s ease-in-out infinite}
+.step-item.current .step-label{color:#0075de;font-weight:600}
+@keyframes pulse-dot{0%,100%{transform:scale(1);box-shadow:0 0 0 0 rgba(0,117,222,.4)}50%{transform:scale(1.2);box-shadow:0 0 0 6px rgba(0,117,222,0)}}
+.console-log{border:1px solid #e4e7ed;border-radius:8px;overflow:hidden}
+.console-header{display:flex;align-items:center;gap:8px;padding:10px 16px;background:#31302e;color:#e6edf3;font-size:13px;font-weight:500}
+.console-header i{color:#0075de}
+.console-hint{margin-left:auto;font-size:11px;color:#8b949e;font-weight:400}
+.console-content{max-height:360px;min-height:200px;overflow-y:auto;padding:12px 16px;background:#0d1117;font-family:'SF Mono',Monaco,Consolas,monospace;font-size:12px;line-height:1.6}
+.console-content::-webkit-scrollbar{width:8px;height:8px}
+.console-content::-webkit-scrollbar-thumb{background:#30363d;border-radius:4px}
+.console-content::-webkit-scrollbar-thumb:hover{background:#484f58}
+.log-line{display:flex;gap:12px;padding:4px 0;color:#e6edf3}
+.log-time{color:#8b949e;min-width:80px;flex:none;font-variant-numeric:tabular-nums}
+.log-message{color:#c9d1d9;flex:1}
+.log-empty{color:#6e7681;text-align:center;padding:60px 20px;font-size:13px}
+
 </style>

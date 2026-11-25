@@ -3,6 +3,7 @@ package com.ontologywiki.ontology.service.analysis;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.ontologywiki.ontology.mapper.AnalysisJobMapper;
+import com.ontologywiki.ontology.mapper.AnalysisLogMapper;
 import com.ontologywiki.ontology.mapper.OntologyAnalysisMapper;
 import com.ontologywiki.ontology.service.LlmWikiClient;
 import org.springframework.stereotype.Service;
@@ -14,12 +15,14 @@ import java.util.concurrent.CancellationException;
 public class AnalysisJobStore {
     private static final long LEASE_MILLIS = 15 * 60 * 1000;
     private final AnalysisJobMapper mapper;
+    private final AnalysisLogMapper logMapper;
     private final OntologyAnalysisMapper proposals;
     private final LlmWikiClient wiki;
     private final ObjectMapper json;
 
-    public AnalysisJobStore(AnalysisJobMapper mapper, OntologyAnalysisMapper proposals, LlmWikiClient wiki, ObjectMapper json) {
+    public AnalysisJobStore(AnalysisJobMapper mapper, AnalysisLogMapper logMapper, OntologyAnalysisMapper proposals, LlmWikiClient wiki, ObjectMapper json) {
         this.mapper = mapper;
+        this.logMapper = logMapper;
         this.proposals = proposals;
         this.wiki = wiki;
         this.json = json;
@@ -52,6 +55,17 @@ public class AnalysisJobStore {
         if (runId < 1) throw new IllegalArgumentException("执行编号无效");
         try { return mapper.selectStageTimings(taskId, runId); }
         catch (org.springframework.jdbc.BadSqlGrammarException failure) { throw runMigrationRequired(failure); }
+    }
+
+    public List<Map<String,Object>> logs(long taskId, long runId) {
+        if (runId < 1) throw new IllegalArgumentException("执行编号无效");
+        Map<String,Object> run = mapper.selectRunById(taskId, runId);
+        if (run == null) return Collections.emptyList();
+        String runToken = String.valueOf(run.get("runToken"));
+        try { return logMapper.selectLogs(taskId, runToken); }
+        catch (org.springframework.jdbc.BadSqlGrammarException failure) {
+            throw new IllegalStateException("分析日志表未就绪，请先执行 backend/sql/migrate-analysis-log.sql", failure);
+        }
     }
 
     @Transactional(rollbackFor = Exception.class)
